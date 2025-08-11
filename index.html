@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced PDF Suite by Vipin Nair</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Load libraries -->
+    <script src="https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
+</head>
+<body>
+    <!-- Header Section -->
+    <header class="header">
+        <div class="header__content">
+            <h1 class="header__title">Advanced PDF Suite by Vipin Nair</h1>
+            <button id="theme-toggle" class="btn btn--sm theme-toggle" title="Toggle dark mode">🌙</button>
+        </div>
+    </header>
+
+    <!-- Initialization Loading -->
+    <div id="init-loading" class="library-status">
+        <div class="library-status__content">
+            <div class="loading-spinner"></div>
+            <p>Initializing Advanced PDF Suite...</p>
+        </div>
+    </div>
+
+    <!-- Main Container -->
+    <div class="main-container" id="main-container">
+        <!-- Tab Navigation -->
+        <nav class="tab-nav">
+            <button class="tab-btn active" data-tab="editor">📝 Advanced Editor</button>
+            <button class="tab-btn" data-tab="merge">🔗 Merge</button>
+            <button class="tab-btn" data-tab="split">✂️ Split</button>
+            <button class="tab-btn" data-tab="organize">📚 Organize</button>
+        </nav>
+
+        <!-- Status Container -->
+        <div id="status-container" class="status-container hidden">
+            <div class="status-content">
+                <div class="loading-spinner" id="status-spinner"></div>
+                <p id="status-text">Processing...</p>
+                <div class="progress-bar hidden" id="progress-bar">
+                    <div class="progress-fill" id="progress-fill"></div>
+                    <span class="progress-text" id="progress-text">0%</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- OCR Progress Modal -->
+        <div id="ocr-progress" class="ocr-progress hidden">
+            <div class="ocr-progress__content">
+                <h3>🔍 OCR Processing</h3>
+                <p id="ocr-status">Preparing OCR...</p>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="ocr-progress-fill"></div>
+                    <span class="progress-text" id="ocr-progress-text">0%</span>
+                </div>
+                <div class="ocr-pages-info">
+                    <span id="ocr-current-page">0</span> / <span id="ocr-total-pages">0</span> pages
+                </div>
+            </div>
+        </div>
+
+        <!-- Advanced Editor Tab -->
+        <div class="tab-content active" id="editor-tab">
+            <!-- Toolbar -->
+            <div class="toolbar">
+                <div class="toolbar__section">
+                    <label for="editor-file-input" class="btn btn--secondary">
+                        📁 Open PDF
+                        <input type="file" id="editor-file-input" accept=".pdf" style="display: none;">
+                    </label>
+                    <button id="new-doc-btn" class="btn btn--secondary">📄 New Document</button>
+                    <button id="save-editor-btn" class="btn btn--primary" disabled>💾 Save</button>
+                </div>
+                
+                <div class="toolbar__section">
+                    <div class="tool-group">
+                        <button class="tool-btn active" data-tool="SELECT" title="Select & Edit Text">↖️</button>
+                        <button class="tool-btn" data-tool="DRAW" title="Draw">✏️</button>
+                        <button class="tool-btn" data-tool="TEXT" title="Add Text">T</button>
+                        <button class="tool-btn" data-tool="HIGHLIGHT" title="Highlight">🖍️</button>
+                    </div>
+                </div>
+
+                <div class="toolbar__section">
+                    <div class="tool-group">
+                        <label class="tool-option">
+                            Color: <input type="color" id="color-picker" value="#000000">
+                        </label>
+                        <label class="tool-option">
+                            Size: 
+                            <select id="size-selector">
+                                <option value="1">1px</option>
+                                <option value="2" selected>2px</option>
+                                <option value="3">3px</option>
+                                <option value="5">5px</option>
+                                <option value="8">8px</option>
+                            </select>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="toolbar__section">
+                    <div class="tool-group">
+                        <button id="zoom-out-btn" class="btn btn--sm">🔍-</button>
+                        <span id="zoom-level">100%</span>
+                        <button id="zoom-in-btn" class="btn btn--sm">🔍+</button>
+                        <button id="fit-width-btn" class="btn btn--sm">↔</button>
+                    </div>
+                </div>
+
+                <div class="toolbar__section">
+                    <div class="tool-group">
+                        <button id="prev-page-btn" class="btn btn--sm" disabled>◀</button>
+                        <span id="page-info">-/-</span>
+                        <button id="next-page-btn" class="btn btn--sm" disabled>▶</button>
+                    </div>
+                </div>
+
+                <div class="toolbar__section">
+                    <div class="tool-group">
+                        <button id="undo-btn" class="btn btn--sm" disabled>↶ Undo</button>
+                        <button id="redo-btn" class="btn btn--sm" disabled>↷ Redo</button>
+                        <button id="self-test-btn" class="btn btn--sm">🧪 Test</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Advanced Editor Layout -->
+            <div class="advanced-editor">
+                <!-- Welcome Screen -->
+                <div id="editor-welcome" class="welcome-area">
+                    <h2>Advanced PDF Editor</h2>
+                    <p>Edit text directly in PDFs • OCR for scanned documents • Full annotation support</p>
+                    <div class="welcome-actions">
+                        <label for="editor-welcome-input" class="btn btn--primary btn--lg">
+                            📁 Open PDF
+                            <input type="file" id="editor-welcome-input" accept=".pdf" style="display: none;">
+                        </label>
+                        <button id="welcome-new-doc" class="btn btn--outline btn--lg">📄 New Document</button>
+                    </div>
+                    <div class="drag-drop-area" id="editor-drop-area">
+                        <p>Or drag and drop a PDF file here</p>
+                    </div>
+                </div>
+
+                <!-- Editor Content (shown when PDF loaded) -->
+                <div id="editor-content" class="editor-content hidden">
+                    <!-- Left Sidebar - Page Thumbnails -->
+                    <div class="editor-sidebar">
+                        <div class="sidebar-header">
+                            <h4>Pages</h4>
+                        </div>
+                        <div class="page-thumbnails" id="page-thumbnails">
+                            <!-- Thumbnails will be generated here -->
+                        </div>
+                    </div>
+
+                    <!-- Main Editor Area -->
+                    <div class="editor-main">
+                        <div class="editor-canvas-container">
+                            <div class="pages-stack" id="pages-stack">
+                                <!-- Page stacks will be generated here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Merge Tab -->
+        <div class="tab-content" id="merge-tab">
+            <div class="tool-header">
+                <h2>Merge PDFs</h2>
+                <p>Select multiple PDF files to combine them into one document</p>
+            </div>
+            <div class="file-drop-zone" id="merge-drop-zone">
+                <p>Drop PDF files here or click to select</p>
+                <input type="file" id="merge-file-input" accept=".pdf" multiple style="display: none;">
+                <button class="btn btn--primary" onclick="document.getElementById('merge-file-input').click()">Select Files</button>
+            </div>
+            <div class="file-list" id="merge-file-list"></div>
+            <div class="action-buttons">
+                <button id="clear-merge-btn" class="btn btn--outline" disabled>Clear All</button>
+                <button id="merge-pdfs-btn" class="btn btn--primary" disabled>Merge PDFs</button>
+            </div>
+        </div>
+
+        <!-- Split Tab -->
+        <div class="tab-content" id="split-tab">
+            <div class="tool-header">
+                <h2>Split PDF</h2>
+                <p>Select a PDF file and choose how to split it</p>
+            </div>
+            <div class="file-drop-zone" id="split-drop-zone">
+                <p>Drop a PDF file here or click to select</p>
+                <input type="file" id="split-file-input" accept=".pdf" style="display: none;">
+                <button class="btn btn--primary" onclick="document.getElementById('split-file-input').click()">Select PDF</button>
+            </div>
+            <div class="split-controls hidden" id="split-controls">
+                <div class="split-options">
+                    <div class="form-group">
+                        <label class="form-label">Split Method:</label>
+                        <select id="split-method" class="form-control">
+                            <option value="pages">Split by Page Range</option>
+                            <option value="every">Split Every N Pages</option>
+                            <option value="individual">Split into Individual Pages</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="page-range-group">
+                        <label class="form-label">Page Ranges (e.g., 1-3, 5, 7-10):</label>
+                        <input type="text" id="page-ranges" class="form-control" placeholder="1-3, 5, 7-10">
+                    </div>
+                    <div class="form-group hidden" id="every-pages-group">
+                        <label class="form-label">Split Every:</label>
+                        <input type="number" id="every-pages" class="form-control" value="1" min="1">
+                        <span>pages</span>
+                    </div>
+                </div>
+                <div class="action-buttons">
+                    <button id="split-pdf-btn" class="btn btn--primary">Split PDF</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Organize Tab -->
+        <div class="tab-content" id="organize-tab">
+            <div class="tool-header">
+                <h2>Organize PDF</h2>
+                <p>Reorder, rotate, or delete pages from your PDF</p>
+            </div>
+            <div class="file-drop-zone" id="organize-drop-zone">
+                <p>Drop a PDF file here or click to select</p>
+                <input type="file" id="organize-file-input" accept=".pdf" style="display: none;">
+                <button class="btn btn--primary" onclick="document.getElementById('organize-file-input').click()">Select PDF</button>
+            </div>
+            <div class="organize-controls hidden" id="organize-controls">
+                <div class="organize-toolbar">
+                    <button id="rotate-selected-btn" class="btn btn--sm" disabled>🔄 Rotate Selected</button>
+                    <button id="delete-selected-btn" class="btn btn--sm" disabled>🗑️ Delete Selected</button>
+                    <button id="select-all-btn" class="btn btn--sm">✅ Select All</button>
+                    <button id="deselect-all-btn" class="btn btn--sm">❌ Deselect All</button>
+                </div>
+                <div class="page-grid" id="page-grid"></div>
+                <div class="action-buttons">
+                    <button id="save-organized-btn" class="btn btn--primary">Save Organized PDF</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Error Display -->
+    <div id="error-display" class="error-display hidden">
+        <div class="error-content">
+            <h3>⚠️ Application Error</h3>
+            <p id="error-message">An error occurred while loading the application.</p>
+            <button id="retry-btn" class="btn btn--primary">Retry</button>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="footer__content">
+            <p>&copy; 2025 Advanced PDF Suite v3.0 | Email: <a href="mailto:audit.vipin@gmail.com" target="_blank">audit.vipin@gmail.com</a></p>
+        </div>
+    </footer>
+
+    <script>
+        // Initialize PDF.js worker path immediately
+        if (typeof pdfjsLib !== 'undefined') {
+            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+            console.log('PDF.js worker configured');
+        }
+
+        // Simple initialization check
+        function checkLibrariesAndInit() {
+            console.log('Checking libraries...');
+            
+            const hasPDFJS = typeof pdfjsLib !== 'undefined';
+            const hasPDFLib = typeof PDFLib !== 'undefined';
+            const hasJSZip = typeof JSZip !== 'undefined';
+            const hasTesseract = typeof Tesseract !== 'undefined';
+            
+            console.log('PDF.js available:', hasPDFJS);
+            console.log('PDF-lib available:', hasPDFLib);
+            console.log('JSZip available:', hasJSZip);
+            console.log('Tesseract.js available:', hasTesseract);
+            
+            if (hasPDFJS && hasPDFLib && hasJSZip && hasTesseract) {
+                console.log('All libraries loaded, initializing...');
+                hideInitLoading();
+                initializeAdvancedPDFSuite();
+            } else {
+                console.log('Waiting for libraries...');
+                setTimeout(checkLibrariesAndInit, 100);
+            }
+        }
+
+        function hideInitLoading() {
+            const initLoading = document.getElementById('init-loading');
+            const mainContainer = document.getElementById('main-container');
+            
+            if (initLoading) initLoading.style.display = 'none';
+            if (mainContainer) mainContainer.style.display = 'flex';
+        }
+
+        function showError(message) {
+            console.error('Initialization Error:', message);
+            const initLoading = document.getElementById('init-loading');
+            const errorDisplay = document.getElementById('error-display');
+            const errorMessage = document.getElementById('error-message');
+            
+            if (initLoading) initLoading.style.display = 'none';
+            if (errorDisplay && errorMessage) {
+                errorMessage.textContent = message;
+                errorDisplay.classList.remove('hidden');
+            }
+        }
+
+        // Start checking libraries after a short delay
+        setTimeout(checkLibrariesAndInit, 500);
+
+        // Retry functionality
+        document.addEventListener('DOMContentLoaded', function() {
+            const retryBtn = document.getElementById('retry-btn');
+            if (retryBtn) {
+                retryBtn.addEventListener('click', function() {
+                    location.reload();
+                });
+            }
+        });
+    </script>
+
+    <!-- Main App Script -->
+    <script src="app.js"></script>
+</body>
+</html>
