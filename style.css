@@ -1681,3 +1681,533 @@ select.form-control {
 [data-color-scheme="dark"] .page-preview {
   background: var(--color-surface);
 }
+
+/* ==========================================================================
+   Adobe-style feature tabs: Fill & Sign, Watermark/Stamps, Compress, Protect
+   ========================================================================== */
+
+.tab-nav {
+  flex-wrap: wrap;
+}
+
+.form-row {
+  display: flex;
+  gap: var(--space-16);
+}
+
+.form-row .form-group {
+  flex: 1;
+  min-width: 0;
+}
+
+.fillsign-hint {
+  margin: 0;
+  padding: var(--space-12) var(--space-24);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  background: var(--color-bg-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* Fill & Sign */
+.fillsign-controls {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.fillsign-toolbar {
+  padding: var(--space-12) var(--space-16);
+  background: var(--color-bg-2);
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  gap: var(--space-24);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.fs-tool-btn {
+  padding: var(--space-8) var(--space-12);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  border-radius: var(--radius-base);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  transition: all var(--duration-fast) var(--ease-standard);
+}
+
+.fs-tool-btn:hover {
+  background: var(--color-secondary);
+  border-color: var(--color-primary);
+}
+
+.fs-tool-btn.active {
+  background: var(--color-primary);
+  color: var(--color-btn-primary-text);
+  border-color: var(--color-primary);
+}
+
+.fillsign-body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.fillsign-canvas-area {
+  flex: 1;
+  overflow: auto;
+  padding: var(--space-24);
+  display: flex;
+  justify-content: center;
+  background: var(--color-bg-2);
+}
+
+.fillsign-page-wrap {
+  position: relative;
+  box-shadow: var(--shadow-lg);
+  border-radius: var(--radius-base);
+  overflow: hidden;
+  background: white;
+  max-width: 100%;
+  height: fit-content;
+}
+
+.fillsign-page-wrap canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.fillsign-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+}
+
+.fs-item {
+  position: absolute;
+  cursor: move;
+  border: 1px dashed transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  touch-action: none;
+}
+
+.fs-item:hover,
+.fs-item.selected {
+  border-color: var(--color-primary);
+  background: rgba(var(--color-teal-500-rgb), 0.08);
+}
+
+.fs-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.fs-item .fs-item-text {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.fs-item-delete {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--color-error);
+  color: white;
+  border: none;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+
+.fs-item.selected .fs-item-delete {
+  display: flex;
+}
+
+.fillsign-sidebar {
+  width: 260px;
+  background: var(--color-bg-1);
+  border-left: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.fillsign-form-fields {
+  flex: 1;
+  padding: var(--space-16);
+  overflow-y: auto;
+}
+
+.fillsign-empty-note {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.form-field-row {
+  margin-bottom: var(--space-12);
+}
+
+.form-field-row label {
+  display: block;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-4);
+}
+
+.fillsign-flatten-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-16);
+  border-top: 1px solid var(--color-border);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+/* Signature Modal */
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal.hidden {
+  display: none;
+}
+
+.modal__backdrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(2px);
+}
+
+.modal__dialog {
+  position: relative;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  width: 90%;
+  max-width: 560px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-16) var(--space-24);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.modal__header h3 {
+  margin: 0;
+}
+
+.modal__close {
+  background: transparent;
+  border: none;
+  font-size: var(--font-size-2xl);
+  line-height: 1;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.modal__body {
+  padding: var(--space-24);
+}
+
+.modal__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-12);
+  padding: var(--space-16) var(--space-24);
+  border-top: 1px solid var(--color-border);
+}
+
+.sig-mode-tabs {
+  display: flex;
+  gap: var(--space-8);
+  margin-bottom: var(--space-16);
+}
+
+.sig-mode-btn {
+  padding: var(--space-8) var(--space-16);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-1);
+  color: var(--color-text);
+  border-radius: var(--radius-base);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+.sig-mode-btn.active {
+  background: var(--color-primary);
+  color: var(--color-btn-primary-text);
+  border-color: var(--color-primary);
+}
+
+.sig-mode-panel.hidden {
+  display: none;
+}
+
+.signature-draw-canvas {
+  width: 100%;
+  max-width: 500px;
+  height: 180px;
+  background: white;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-base);
+  cursor: crosshair;
+  touch-action: none;
+  margin-top: var(--space-12);
+}
+
+.sig-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--space-8);
+}
+
+#signature-type-input,
+#signature-type-font {
+  margin-bottom: var(--space-8);
+}
+
+#signature-upload-input {
+  margin-bottom: var(--space-8);
+}
+
+/* Watermark, Stamps & Page Numbers */
+.watermark-controls {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.watermark-layout {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.watermark-preview-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--color-bg-2);
+}
+
+.wm-page-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-12);
+  padding: var(--space-12);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.wm-preview-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+
+#wm-page-wrap,
+#redact-page-wrap {
+  margin: var(--space-24) auto;
+}
+
+.watermark-options {
+  width: 340px;
+  border-left: 1px solid var(--color-border);
+  background: var(--color-surface);
+  padding: var(--space-16);
+  overflow-y: auto;
+}
+
+.wm-section-tabs {
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-16);
+}
+
+.wm-section-btn,
+.protect-section-btn {
+  padding: var(--space-6) var(--space-12);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-1);
+  color: var(--color-text);
+  border-radius: var(--radius-base);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+.wm-section-btn.active,
+.protect-section-btn.active {
+  background: var(--color-primary);
+  color: var(--color-btn-primary-text);
+  border-color: var(--color-primary);
+}
+
+.wm-section-panel.hidden {
+  display: none;
+}
+
+.stamp-gallery {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+  margin-bottom: var(--space-16);
+}
+
+.stamp-btn {
+  padding: var(--space-8) var(--space-12);
+  border-radius: var(--radius-sm);
+  border: 3px solid;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  background: transparent;
+  font-size: var(--font-size-sm);
+}
+
+.stamp-btn.active {
+  box-shadow: var(--shadow-md);
+}
+
+.stamp-btn--approved { color: #1a7f37; border-color: #1a7f37; }
+.stamp-btn--draft { color: #7a7a7a; border-color: #7a7a7a; }
+.stamp-btn--confidential { color: #c81e1e; border-color: #c81e1e; }
+.stamp-btn--reviewed { color: #1d5fd6; border-color: #1d5fd6; }
+.stamp-btn--void { color: #c81e1e; border-color: #c81e1e; }
+.stamp-btn--urgent { color: #d67200; border-color: #d67200; }
+
+/* Compress */
+.compress-controls {
+  padding: var(--space-24);
+  max-width: 640px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.compress-summary {
+  padding: var(--space-16);
+  background: var(--color-bg-1);
+  border-radius: var(--radius-base);
+  border: 1px solid var(--color-border);
+  margin-bottom: var(--space-16);
+  font-size: var(--font-size-sm);
+}
+
+.compress-result {
+  margin-top: var(--space-16);
+  padding: var(--space-16);
+  background: var(--color-bg-3);
+  border-radius: var(--radius-base);
+  border: 1px solid var(--color-border);
+  text-align: center;
+}
+
+.compress-result.hidden {
+  display: none;
+}
+
+/* Protect & Redact */
+.protect-controls {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: var(--space-16) var(--space-24) 0;
+}
+
+.protect-section-panel.hidden {
+  display: none;
+}
+
+.redact-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-12);
+  padding: var(--space-12) 0;
+}
+
+.redact-mark-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 4;
+  cursor: crosshair;
+}
+
+.permission-checks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  font-size: var(--font-size-sm);
+}
+
+.permission-checks label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+
+@media (max-width: 900px) {
+  .fillsign-body,
+  .watermark-layout {
+    flex-direction: column;
+  }
+
+  .fillsign-sidebar,
+  .watermark-options {
+    width: 100%;
+    border-left: none;
+    border-top: 1px solid var(--color-border);
+  }
+}
