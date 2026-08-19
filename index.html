@@ -5,49 +5,58 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Advanced PDF Suite by Vipin Nair</title>
     <link rel="stylesheet" href="style.css">
-    <!-- Load libraries -->
-    <script src="https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
-    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <!-- Python engine (PyMuPDF via Pyodide) is bootstrapped from app.js -->
+    <script src="https://cdn.jsdelivr.net/pyodide/v314.0.5/full/pyodide.js"></script>
+    <!-- Tesseract.js performs OCR recognition; PyMuPDF writes the text layer -->
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+    <!-- JSZip bundles multi-file exports -->
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 </head>
 <body>
-    <!-- Header Section -->
     <header class="header">
         <div class="header__content">
-            <h1 class="header__title">Advanced PDF Suite by Vipin Nair</h1>
-            <button id="theme-toggle" class="btn btn--sm theme-toggle" title="Toggle dark mode">🌙</button>
+            <h1 class="header__title">Advanced PDF Suite</h1>
+            <div class="header__right">
+                <span id="engine-badge" class="engine-badge engine-badge--loading" title="Python PDF engine status">
+                    <span class="engine-dot"></span><span id="engine-badge-text">Starting Python engine…</span>
+                </span>
+                <button id="theme-toggle" class="btn btn--sm theme-toggle" title="Toggle dark mode">🌙</button>
+            </div>
         </div>
     </header>
 
-    <!-- Initialization Loading -->
-    <div id="init-loading" class="library-status">
-        <div class="library-status__content">
-            <div class="loading-spinner"></div>
-            <p>Initializing Advanced PDF Suite...</p>
-        </div>
-    </div>
-
-    <!-- Main Container -->
     <div class="main-container" id="main-container">
-        <!-- Tab Navigation -->
         <nav class="tab-nav">
-            <button class="tab-btn active" data-tab="editor">📝 Advanced Editor</button>
-            <button class="tab-btn" data-tab="merge">🔗 Merge</button>
-            <button class="tab-btn" data-tab="split">✂️ Split</button>
-            <button class="tab-btn" data-tab="organize">📚 Organize</button>
-            <button class="tab-btn" data-tab="fillsign">🖊️ Fill &amp; Sign</button>
-            <button class="tab-btn" data-tab="watermark">💧 Watermark &amp; Stamps</button>
+            <button class="tab-btn active" data-tab="edit">📝 Edit Text</button>
+            <button class="tab-btn" data-tab="pages">📚 Pages</button>
+            <button class="tab-btn" data-tab="sign">🖊️ Fill &amp; Sign</button>
+            <button class="tab-btn" data-tab="stamp">💧 Watermark</button>
+            <button class="tab-btn" data-tab="ocr">🔍 OCR</button>
             <button class="tab-btn" data-tab="compress">🗜️ Compress</button>
-            <button class="tab-btn" data-tab="protect">🔒 Protect &amp; Redact</button>
+            <button class="tab-btn" data-tab="protect">🔒 Protect</button>
+            <button class="tab-btn" data-tab="redact">⬛ Redact</button>
+            <button class="tab-btn" data-tab="export">📤 Export</button>
+            <button class="tab-btn" data-tab="compare">⚖️ Compare</button>
         </nav>
 
-        <!-- Status Container -->
+        <!-- Engine boot progress -->
+        <div id="engine-loading" class="engine-loading">
+            <div class="engine-loading__inner">
+                <div class="loading-spinner"></div>
+                <h3>Starting the Python PDF engine</h3>
+                <p id="engine-loading-step">Downloading Pyodide…</p>
+                <div class="progress-bar"><div class="progress-fill" id="engine-progress-fill"></div></div>
+                <p class="engine-loading__note">
+                    PyMuPDF runs entirely in your browser — no file ever leaves your device.
+                    This one-time download (~28&nbsp;MB) is cached for next time.
+                </p>
+            </div>
+        </div>
+
         <div id="status-container" class="status-container hidden">
             <div class="status-content">
-                <div class="loading-spinner" id="status-spinner"></div>
-                <p id="status-text">Processing...</p>
+                <div class="loading-spinner"></div>
+                <p id="status-text">Processing…</p>
                 <div class="progress-bar hidden" id="progress-bar">
                     <div class="progress-fill" id="progress-fill"></div>
                     <span class="progress-text" id="progress-text">0%</span>
@@ -55,681 +64,598 @@
             </div>
         </div>
 
-        <!-- OCR Progress Modal -->
-        <div id="ocr-progress" class="ocr-progress hidden">
-            <div class="ocr-progress__content">
-                <h3>🔍 OCR Processing</h3>
-                <p id="ocr-status">Preparing OCR...</p>
-                <div class="progress-bar">
-                    <div class="progress-fill" id="ocr-progress-fill"></div>
-                    <span class="progress-text" id="ocr-progress-text">0%</span>
+        <!-- ============================ EDIT TEXT ============================ -->
+        <div class="tab-content active" id="edit-tab">
+            <div class="tool-header">
+                <h2>Edit Text &amp; Annotate</h2>
+                <p>Click any text to edit it for real — the original glyphs are replaced in the PDF, not covered up</p>
+            </div>
+            <div class="file-drop-zone" data-drop="edit">
+                <p>Drop a PDF here or click to select</p>
+                <input type="file" id="edit-file" accept=".pdf" hidden>
+                <button class="btn btn--primary" data-pick="edit-file">Select PDF</button>
+            </div>
+
+            <div class="workspace hidden" id="edit-workspace">
+                <div class="workspace__main">
+                    <div class="viewer-toolbar">
+                        <div class="tool-group">
+                            <button class="btn btn--sm" data-nav="edit" data-dir="-1">◀</button>
+                            <span class="page-indicator" id="edit-page-info">-/-</span>
+                            <button class="btn btn--sm" data-nav="edit" data-dir="1">▶</button>
+                        </div>
+                        <div class="tool-group">
+                            <button class="mode-btn active" data-editmode="TEXT">✏️ Edit Text</button>
+                            <button class="mode-btn" data-editmode="highlight">🖍️ Highlight</button>
+                            <button class="mode-btn" data-editmode="underline">U̲ Underline</button>
+                            <button class="mode-btn" data-editmode="strikeout">S̶ Strikeout</button>
+                            <button class="mode-btn" data-editmode="note">📌 Note</button>
+                            <button class="mode-btn" data-editmode="freetext">💬 Callout</button>
+                        </div>
+                        <div class="tool-group">
+                            <label class="tool-option">Colour <input type="color" id="edit-annot-color" value="#ffd400"></label>
+                        </div>
+                    </div>
+                    <p class="hint" id="edit-hint">Click a highlighted text block to edit it. Switch modes above to annotate instead.</p>
+                    <div class="page-holder" id="edit-holder">
+                        <img class="page-image" id="edit-page-img" alt="PDF page">
+                        <div class="overlay" id="edit-overlay"></div>
+                    </div>
                 </div>
-                <div class="ocr-pages-info">
-                    <span id="ocr-current-page">0</span> / <span id="ocr-total-pages">0</span> pages
-                </div>
+                <aside class="workspace__side">
+                    <div class="side-header"><h4>Document</h4></div>
+                    <div class="side-body">
+                        <div id="edit-doc-info" class="doc-info"></div>
+                        <div class="form-group">
+                            <label class="form-label">Find text</label>
+                            <input type="text" id="edit-search" class="form-control" placeholder="Search…">
+                            <button class="btn btn--sm btn--full-width" id="edit-search-btn">Search</button>
+                            <div id="edit-search-results" class="search-results"></div>
+                        </div>
+                        <div id="edit-annot-list" class="annot-list"></div>
+                    </div>
+                    <div class="side-footer">
+                        <button class="btn btn--primary btn--full-width" id="edit-save">💾 Save PDF</button>
+                    </div>
+                </aside>
             </div>
         </div>
 
-        <!-- Advanced Editor Tab -->
-        <div class="tab-content active" id="editor-tab">
-            <!-- Toolbar -->
-            <div class="toolbar">
-                <div class="toolbar__section">
-                    <label for="editor-file-input" class="btn btn--secondary">
-                        📁 Open PDF
-                        <input type="file" id="editor-file-input" accept=".pdf" style="display: none;">
-                    </label>
-                    <button id="new-doc-btn" class="btn btn--secondary">📄 New Document</button>
-                    <button id="save-editor-btn" class="btn btn--primary" disabled>💾 Save</button>
-                </div>
-                
-                <div class="toolbar__section">
-                    <div class="tool-group">
-                        <button class="tool-btn active" data-tool="SELECT" title="Select & Edit Text">↖️</button>
-                        <button class="tool-btn" data-tool="DRAW" title="Draw">✏️</button>
-                        <button class="tool-btn" data-tool="TEXT" title="Add Text">T</button>
-                        <button class="tool-btn" data-tool="HIGHLIGHT" title="Highlight">🖍️</button>
-                    </div>
-                </div>
+        <!-- ============================== PAGES ============================== -->
+        <div class="tab-content" id="pages-tab">
+            <div class="tool-header">
+                <h2>Organize Pages</h2>
+                <p>Reorder, rotate, delete, merge and split — rebuilt on PyMuPDF so quality never degrades</p>
+            </div>
+            <div class="file-drop-zone" data-drop="pages">
+                <p>Drop one or more PDFs here (multiple files will be merged in order)</p>
+                <input type="file" id="pages-file" accept=".pdf" multiple hidden>
+                <button class="btn btn--primary" data-pick="pages-file">Select PDFs</button>
+            </div>
 
-                <div class="toolbar__section">
+            <div class="workspace workspace--full hidden" id="pages-workspace">
+                <div class="viewer-toolbar">
                     <div class="tool-group">
-                        <label class="tool-option">
-                            Color: <input type="color" id="color-picker" value="#000000">
-                        </label>
-                        <label class="tool-option">
-                            Size: 
-                            <select id="size-selector">
-                                <option value="1">1px</option>
-                                <option value="2" selected>2px</option>
-                                <option value="3">3px</option>
-                                <option value="5">5px</option>
-                                <option value="8">8px</option>
+                        <button class="btn btn--sm" id="pages-rotate-left">↺ Rotate Left</button>
+                        <button class="btn btn--sm" id="pages-rotate-right">↻ Rotate Right</button>
+                        <button class="btn btn--sm" id="pages-delete">🗑️ Delete</button>
+                    </div>
+                    <div class="tool-group">
+                        <button class="btn btn--sm" id="pages-select-all">Select All</button>
+                        <button class="btn btn--sm" id="pages-deselect">Clear Selection</button>
+                    </div>
+                    <div class="tool-group">
+                        <label class="tool-option">Split
+                            <select id="pages-split-mode" class="form-control form-control--inline">
+                                <option value="">— none —</option>
+                                <option value="individual">Every page separately</option>
+                                <option value="every">Every N pages</option>
+                                <option value="ranges">By ranges</option>
                             </select>
                         </label>
+                        <input type="number" id="pages-split-every" class="form-control form-control--inline hidden" value="2" min="1">
+                        <input type="text" id="pages-split-ranges" class="form-control form-control--inline hidden" placeholder="1-3, 5">
                     </div>
                 </div>
-
-                <div class="toolbar__section">
-                    <div class="tool-group">
-                        <button id="zoom-out-btn" class="btn btn--sm">🔍-</button>
-                        <span id="zoom-level">100%</span>
-                        <button id="zoom-in-btn" class="btn btn--sm">🔍+</button>
-                        <button id="fit-width-btn" class="btn btn--sm">↔</button>
-                    </div>
-                </div>
-
-                <div class="toolbar__section">
-                    <div class="tool-group">
-                        <button id="prev-page-btn" class="btn btn--sm" disabled>◀</button>
-                        <span id="page-info">-/-</span>
-                        <button id="next-page-btn" class="btn btn--sm" disabled>▶</button>
-                    </div>
-                </div>
-
-                <div class="toolbar__section">
-                    <div class="tool-group">
-                        <button id="undo-btn" class="btn btn--sm" disabled>↶ Undo</button>
-                        <button id="redo-btn" class="btn btn--sm" disabled>↷ Redo</button>
-                        <button id="self-test-btn" class="btn btn--sm">🧪 Test</button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Advanced Editor Layout -->
-            <div class="advanced-editor">
-                <!-- Welcome Screen -->
-                <div id="editor-welcome" class="welcome-area">
-                    <h2>Advanced PDF Editor</h2>
-                    <p>Edit text directly in PDFs • OCR for scanned documents • Full annotation support</p>
-                    <div class="welcome-actions">
-                        <label for="editor-welcome-input" class="btn btn--primary btn--lg">
-                            📁 Open PDF
-                            <input type="file" id="editor-welcome-input" accept=".pdf" style="display: none;">
-                        </label>
-                        <button id="welcome-new-doc" class="btn btn--outline btn--lg">📄 New Document</button>
-                    </div>
-                    <div class="drag-drop-area" id="editor-drop-area">
-                        <p>Or drag and drop a PDF file here</p>
-                    </div>
-                </div>
-
-                <!-- Editor Content (shown when PDF loaded) -->
-                <div id="editor-content" class="editor-content hidden">
-                    <!-- Left Sidebar - Page Thumbnails -->
-                    <div class="editor-sidebar">
-                        <div class="sidebar-header">
-                            <h4>Pages</h4>
-                        </div>
-                        <div class="page-thumbnails" id="page-thumbnails">
-                            <!-- Thumbnails will be generated here -->
-                        </div>
-                    </div>
-
-                    <!-- Main Editor Area -->
-                    <div class="editor-main">
-                        <div class="editor-canvas-container">
-                            <div class="pages-stack" id="pages-stack">
-                                <!-- Page stacks will be generated here -->
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Merge Tab -->
-        <div class="tab-content" id="merge-tab">
-            <div class="tool-header">
-                <h2>Merge PDFs</h2>
-                <p>Select multiple PDF files to combine them into one document</p>
-            </div>
-            <div class="file-drop-zone" id="merge-drop-zone">
-                <p>Drop PDF files here or click to select</p>
-                <input type="file" id="merge-file-input" accept=".pdf" multiple style="display: none;">
-                <button class="btn btn--primary" onclick="document.getElementById('merge-file-input').click()">Select Files</button>
-            </div>
-            <div class="file-list" id="merge-file-list"></div>
-            <div class="action-buttons">
-                <button id="clear-merge-btn" class="btn btn--outline" disabled>Clear All</button>
-                <button id="merge-pdfs-btn" class="btn btn--primary" disabled>Merge PDFs</button>
-            </div>
-        </div>
-
-        <!-- Split Tab -->
-        <div class="tab-content" id="split-tab">
-            <div class="tool-header">
-                <h2>Split PDF</h2>
-                <p>Select a PDF file and choose how to split it</p>
-            </div>
-            <div class="file-drop-zone" id="split-drop-zone">
-                <p>Drop a PDF file here or click to select</p>
-                <input type="file" id="split-file-input" accept=".pdf" style="display: none;">
-                <button class="btn btn--primary" onclick="document.getElementById('split-file-input').click()">Select PDF</button>
-            </div>
-            <div class="split-controls hidden" id="split-controls">
-                <div class="split-options">
-                    <div class="form-group">
-                        <label class="form-label">Split Method:</label>
-                        <select id="split-method" class="form-control">
-                            <option value="pages">Split by Page Range</option>
-                            <option value="every">Split Every N Pages</option>
-                            <option value="individual">Split into Individual Pages</option>
-                        </select>
-                    </div>
-                    <div class="form-group" id="page-range-group">
-                        <label class="form-label">Page Ranges (e.g., 1-3, 5, 7-10):</label>
-                        <input type="text" id="page-ranges" class="form-control" placeholder="1-3, 5, 7-10">
-                    </div>
-                    <div class="form-group hidden" id="every-pages-group">
-                        <label class="form-label">Split Every:</label>
-                        <input type="number" id="every-pages" class="form-control" value="1" min="1">
-                        <span>pages</span>
-                    </div>
-                </div>
+                <p class="hint">Drag thumbnails to reorder. Click to select for rotate/delete.</p>
+                <div class="page-grid" id="pages-grid"></div>
                 <div class="action-buttons">
-                    <button id="split-pdf-btn" class="btn btn--primary">Split PDF</button>
+                    <button class="btn btn--primary" id="pages-save">💾 Save PDF</button>
                 </div>
             </div>
         </div>
 
-        <!-- Organize Tab -->
-        <div class="tab-content" id="organize-tab">
-            <div class="tool-header">
-                <h2>Organize PDF</h2>
-                <p>Reorder, rotate, or delete pages from your PDF</p>
-            </div>
-            <div class="file-drop-zone" id="organize-drop-zone">
-                <p>Drop a PDF file here or click to select</p>
-                <input type="file" id="organize-file-input" accept=".pdf" style="display: none;">
-                <button class="btn btn--primary" onclick="document.getElementById('organize-file-input').click()">Select PDF</button>
-            </div>
-            <div class="organize-controls hidden" id="organize-controls">
-                <div class="organize-toolbar">
-                    <button id="rotate-selected-btn" class="btn btn--sm" disabled>🔄 Rotate Selected</button>
-                    <button id="delete-selected-btn" class="btn btn--sm" disabled>🗑️ Delete Selected</button>
-                    <button id="select-all-btn" class="btn btn--sm">✅ Select All</button>
-                    <button id="deselect-all-btn" class="btn btn--sm">❌ Deselect All</button>
-                </div>
-                <div class="page-grid" id="page-grid"></div>
-                <div class="action-buttons">
-                    <button id="save-organized-btn" class="btn btn--primary">Save Organized PDF</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Fill & Sign Tab -->
-        <div class="tab-content" id="fillsign-tab">
+        <!-- ============================ FILL & SIGN ========================== -->
+        <div class="tab-content" id="sign-tab">
             <div class="tool-header">
                 <h2>Fill &amp; Sign</h2>
-                <p>Add your signature, initials, text, dates and checkmarks, or fill in form fields</p>
+                <p>Sign, initial, date and check — plus real AcroForm field filling</p>
             </div>
-            <div class="file-drop-zone" id="fillsign-drop-zone">
-                <p>Drop a PDF file here or click to select</p>
-                <input type="file" id="fillsign-file-input" accept=".pdf" style="display: none;">
-                <button class="btn btn--primary" onclick="document.getElementById('fillsign-file-input').click()">Select PDF</button>
+            <div class="file-drop-zone" data-drop="sign">
+                <p>Drop a PDF here or click to select</p>
+                <input type="file" id="sign-file" accept=".pdf" hidden>
+                <button class="btn btn--primary" data-pick="sign-file">Select PDF</button>
             </div>
 
-            <div class="fillsign-controls hidden" id="fillsign-controls">
-                <div class="fillsign-toolbar">
-                    <div class="tool-group">
-                        <button class="fs-tool-btn active" data-fstool="SIGNATURE" title="Place your signature">✍️ Signature</button>
-                        <button class="fs-tool-btn" data-fstool="INITIALS" title="Place your initials">🔤 Initials</button>
-                        <button class="fs-tool-btn" data-fstool="TEXT" title="Add text">T Text</button>
-                        <button class="fs-tool-btn" data-fstool="DATE" title="Add today's date">📅 Date</button>
-                        <button class="fs-tool-btn" data-fstool="CHECK" title="Add a checkmark">✔️ Check</button>
-                        <button class="fs-tool-btn" data-fstool="CROSS" title="Add an X mark">✖️ X</button>
-                    </div>
-                    <div class="tool-group">
-                        <button id="fs-prev-page-btn" class="btn btn--sm" disabled>◀</button>
-                        <span id="fs-page-info">-/-</span>
-                        <button id="fs-next-page-btn" class="btn btn--sm" disabled>▶</button>
-                    </div>
-                    <div class="tool-group">
-                        <button id="fs-delete-selected-btn" class="btn btn--sm" disabled>🗑️ Remove</button>
-                        <button id="fs-clear-all-btn" class="btn btn--sm">❌ Clear All</button>
-                    </div>
-                </div>
-
-                <p class="fillsign-hint">Choose a tool, then click on the page to place it. Drag a placed item to move it, or select it and click Remove.</p>
-
-                <div class="fillsign-body">
-                    <div class="fillsign-canvas-area">
-                        <div class="fillsign-page-wrap" id="fillsign-page-wrap">
-                            <canvas id="fillsign-pdf-canvas"></canvas>
-                            <div id="fillsign-overlay" class="fillsign-overlay"></div>
+            <div class="workspace hidden" id="sign-workspace">
+                <div class="workspace__main">
+                    <div class="viewer-toolbar">
+                        <div class="tool-group">
+                            <button class="btn btn--sm" data-nav="sign" data-dir="-1">◀</button>
+                            <span class="page-indicator" id="sign-page-info">-/-</span>
+                            <button class="btn btn--sm" data-nav="sign" data-dir="1">▶</button>
+                        </div>
+                        <div class="tool-group">
+                            <button class="mode-btn active" data-signtool="SIGNATURE">✍️ Signature</button>
+                            <button class="mode-btn" data-signtool="INITIALS">🔤 Initials</button>
+                            <button class="mode-btn" data-signtool="TEXT">T Text</button>
+                            <button class="mode-btn" data-signtool="DATE">📅 Date</button>
+                            <button class="mode-btn" data-signtool="CHECK">✔ Check</button>
+                            <button class="mode-btn" data-signtool="CROSS">✖ Cross</button>
+                        </div>
+                        <div class="tool-group">
+                            <button class="btn btn--sm" id="sign-clear">Clear placed</button>
                         </div>
                     </div>
-
-                    <div class="fillsign-sidebar">
-                        <div class="sidebar-header"><h4>Form Fields</h4></div>
-                        <div id="fillsign-form-fields" class="fillsign-form-fields">
-                            <p class="fillsign-empty-note">No fillable form fields detected yet.</p>
-                        </div>
-                        <label class="fillsign-flatten-option">
-                            <input type="checkbox" id="fillsign-flatten-checkbox" checked>
-                            Flatten form fields on save
-                        </label>
+                    <p class="hint">Pick a tool, then click the page to place it. Drag to move; click the ✕ to remove.</p>
+                    <div class="page-holder" id="sign-holder">
+                        <img class="page-image" id="sign-page-img" alt="PDF page">
+                        <div class="overlay" id="sign-overlay"></div>
                     </div>
                 </div>
-
-                <div class="action-buttons">
-                    <button id="fillsign-save-btn" class="btn btn--primary">💾 Save Signed PDF</button>
-                </div>
+                <aside class="workspace__side">
+                    <div class="side-header"><h4>Form Fields</h4></div>
+                    <div class="side-body">
+                        <div id="sign-fields" class="form-fields"><p class="muted">No fillable fields detected.</p></div>
+                    </div>
+                    <div class="side-footer">
+                        <label class="checkbox-row"><input type="checkbox" id="sign-flatten" checked> Flatten fields on save</label>
+                        <button class="btn btn--primary btn--full-width" id="sign-save">💾 Save Signed PDF</button>
+                    </div>
+                </aside>
             </div>
         </div>
 
-        <!-- Watermark, Stamps & Page Numbers Tab -->
-        <div class="tab-content" id="watermark-tab">
+        <!-- ====================== WATERMARK / STAMP / NUMBER ================= -->
+        <div class="tab-content" id="stamp-tab">
             <div class="tool-header">
-                <h2>Watermark, Stamps &amp; Page Numbers</h2>
-                <p>Stamp text/image watermarks, approval stamps, and page numbers or headers/footers across your document</p>
+                <h2>Watermark, Stamps &amp; Numbering</h2>
+                <p>Watermarks, approval stamps, page numbers, headers/footers and legal Bates numbering</p>
             </div>
-            <div class="file-drop-zone" id="watermark-drop-zone">
-                <p>Drop a PDF file here or click to select</p>
-                <input type="file" id="watermark-file-input" accept=".pdf" style="display: none;">
-                <button class="btn btn--primary" onclick="document.getElementById('watermark-file-input').click()">Select PDF</button>
+            <div class="file-drop-zone" data-drop="stamp">
+                <p>Drop a PDF here or click to select</p>
+                <input type="file" id="stamp-file" accept=".pdf" hidden>
+                <button class="btn btn--primary" data-pick="stamp-file">Select PDF</button>
             </div>
 
-            <div class="watermark-controls hidden" id="watermark-controls">
-                <div class="watermark-layout">
-                    <div class="watermark-preview-area">
-                        <div class="wm-page-nav">
-                            <button id="wm-prev-page-btn" class="btn btn--sm" disabled>◀</button>
-                            <span id="wm-page-info">-/-</span>
-                            <button id="wm-next-page-btn" class="btn btn--sm" disabled>▶</button>
-                        </div>
-                        <div class="fillsign-page-wrap" id="wm-page-wrap">
-                            <canvas id="wm-pdf-canvas"></canvas>
-                            <canvas id="wm-preview-canvas" class="wm-preview-canvas"></canvas>
+            <div class="workspace hidden" id="stamp-workspace">
+                <div class="workspace__main">
+                    <div class="viewer-toolbar">
+                        <div class="tool-group">
+                            <button class="btn btn--sm" data-nav="stamp" data-dir="-1">◀</button>
+                            <span class="page-indicator" id="stamp-page-info">-/-</span>
+                            <button class="btn btn--sm" data-nav="stamp" data-dir="1">▶</button>
                         </div>
                     </div>
-
-                    <div class="watermark-options">
-                        <div class="wm-section-tabs">
-                            <button class="wm-section-btn active" data-wmsection="watermark">Watermark</button>
-                            <button class="wm-section-btn" data-wmsection="stamp">Stamps</button>
-                            <button class="wm-section-btn" data-wmsection="numbering">Page Numbers</button>
-                            <button class="wm-section-btn" data-wmsection="headerfooter">Header/Footer</button>
-                        </div>
-
-                        <!-- Watermark section -->
-                        <div class="wm-section-panel" id="wm-section-watermark">
+                    <div class="page-holder" id="stamp-holder">
+                        <img class="page-image" id="stamp-page-img" alt="PDF page">
+                        <div class="overlay" id="stamp-overlay"></div>
+                    </div>
+                </div>
+                <aside class="workspace__side">
+                    <div class="sub-tabs">
+                        <button class="sub-tab active" data-stampsec="water">Watermark</button>
+                        <button class="sub-tab" data-stampsec="stamps">Stamps</button>
+                        <button class="sub-tab" data-stampsec="numbers">Numbers</button>
+                        <button class="sub-tab" data-stampsec="bates">Bates</button>
+                    </div>
+                    <div class="side-body">
+                        <section class="sub-panel" data-panel="water">
                             <div class="form-group">
-                                <label class="form-label">Type:</label>
-                                <select id="wm-type" class="form-control">
-                                    <option value="text">Text</option>
-                                    <option value="image">Image</option>
-                                </select>
-                            </div>
-                            <div class="form-group" id="wm-text-group">
-                                <label class="form-label">Watermark Text:</label>
-                                <input type="text" id="wm-text" class="form-control" value="CONFIDENTIAL" maxlength="60">
-                            </div>
-                            <div class="form-group hidden" id="wm-image-group">
-                                <label class="form-label">Image:</label>
-                                <input type="file" id="wm-image-input" accept="image/*" class="form-control">
+                                <label class="form-label">Text</label>
+                                <input type="text" id="wm-text" class="form-control" value="CONFIDENTIAL">
                             </div>
                             <div class="form-row">
-                                <div class="form-group">
-                                    <label class="form-label">Font Size:</label>
-                                    <input type="number" id="wm-font-size" class="form-control" value="48" min="6" max="200">
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">Color:</label>
-                                    <input type="color" id="wm-color" value="#c81e1e">
-                                </div>
+                                <div class="form-group"><label class="form-label">Size</label>
+                                    <input type="number" id="wm-size" class="form-control" value="48" min="6" max="200"></div>
+                                <div class="form-group"><label class="form-label">Colour</label>
+                                    <input type="color" id="wm-color" value="#c81e1e"></div>
                             </div>
-                            <div class="form-row">
-                                <div class="form-group">
-                                    <label class="form-label">Opacity: <span id="wm-opacity-value">30%</span></label>
-                                    <input type="range" id="wm-opacity" min="5" max="100" value="30">
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">Rotation: <span id="wm-rotation-value">45&deg;</span></label>
-                                    <input type="range" id="wm-rotation" min="-90" max="90" value="45">
-                                </div>
-                            </div>
-                            <div class="form-group">
-                                <label class="form-label">Layout:</label>
-                                <select id="wm-layout" class="form-control">
-                                    <option value="center">Single (Centered)</option>
-                                    <option value="tile">Tiled (Repeated)</option>
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label class="form-label">Apply To:</label>
-                                <select id="wm-apply-to" class="form-control">
-                                    <option value="all">All Pages</option>
-                                    <option value="range">Page Range</option>
-                                </select>
-                            </div>
-                            <div class="form-group hidden" id="wm-range-group">
-                                <label class="form-label">Pages (e.g., 1-3, 5):</label>
-                                <input type="text" id="wm-range" class="form-control" placeholder="1-3, 5">
-                            </div>
-                            <button id="wm-apply-watermark-btn" class="btn btn--primary btn--full-width">Apply Watermark</button>
-                        </div>
+                            <div class="form-group"><label class="form-label">Opacity <span id="wm-op-val">30%</span></label>
+                                <input type="range" id="wm-opacity" min="5" max="100" value="30"></div>
+                            <div class="form-group"><label class="form-label">Rotation <span id="wm-rot-val">45°</span></label>
+                                <input type="range" id="wm-rotate" min="-90" max="90" value="45"></div>
+                            <label class="checkbox-row"><input type="checkbox" id="wm-tiled"> Tile across page</label>
+                            <div class="form-group"><label class="form-label">Pages (blank = all)</label>
+                                <input type="text" id="wm-pages" class="form-control" placeholder="1-3, 5"></div>
+                            <button class="btn btn--primary btn--full-width" id="wm-apply">Apply Watermark</button>
+                        </section>
 
-                        <!-- Stamp section -->
-                        <div class="wm-section-panel hidden" id="wm-section-stamp">
-                            <p class="fillsign-hint">Pick a stamp, then click on the page preview to place it.</p>
-                            <div class="stamp-gallery" id="stamp-gallery">
-                                <button class="stamp-btn stamp-btn--approved" data-stamp="APPROVED">APPROVED</button>
-                                <button class="stamp-btn stamp-btn--draft" data-stamp="DRAFT">DRAFT</button>
-                                <button class="stamp-btn stamp-btn--confidential" data-stamp="CONFIDENTIAL">CONFIDENTIAL</button>
-                                <button class="stamp-btn stamp-btn--reviewed" data-stamp="REVIEWED">REVIEWED</button>
-                                <button class="stamp-btn stamp-btn--void" data-stamp="VOID">VOID</button>
-                                <button class="stamp-btn stamp-btn--urgent" data-stamp="URGENT">URGENT</button>
+                        <section class="sub-panel hidden" data-panel="stamps">
+                            <p class="hint hint--inline">Pick a stamp, then click the page to place it.</p>
+                            <div class="stamp-gallery">
+                                <button class="stamp-btn" data-stamp="APPROVED">APPROVED</button>
+                                <button class="stamp-btn" data-stamp="DRAFT">DRAFT</button>
+                                <button class="stamp-btn" data-stamp="CONFIDENTIAL">CONFIDENTIAL</button>
+                                <button class="stamp-btn" data-stamp="REVIEWED">REVIEWED</button>
+                                <button class="stamp-btn" data-stamp="VOID">VOID</button>
+                                <button class="stamp-btn" data-stamp="URGENT">URGENT</button>
                             </div>
                             <div class="form-group">
-                                <label class="form-label">Custom Stamp Text:</label>
-                                <input type="text" id="stamp-custom-text" class="form-control" placeholder="Type a custom stamp label" maxlength="30">
-                                <button id="stamp-custom-add-btn" class="btn btn--sm">Use Custom Stamp</button>
+                                <label class="form-label">Custom stamp</label>
+                                <input type="text" id="stamp-custom" class="form-control" placeholder="Your text" maxlength="30">
                             </div>
-                            <p id="stamp-active-note" class="fillsign-hint">No stamp selected.</p>
-                            <button id="wm-clear-stamps-btn" class="btn btn--outline btn--full-width">Clear Placed Stamps</button>
-                            <button id="wm-apply-stamps-btn" class="btn btn--primary btn--full-width">Apply Stamps &amp; Save</button>
-                        </div>
+                            <button class="btn btn--outline btn--full-width" id="stamp-clear">Clear placed stamps</button>
+                            <button class="btn btn--primary btn--full-width" id="stamp-apply">Apply Stamps</button>
+                        </section>
 
-                        <!-- Page numbering section -->
-                        <div class="wm-section-panel hidden" id="wm-section-numbering">
-                            <div class="form-group">
-                                <label class="form-label">Format:</label>
+                        <section class="sub-panel hidden" data-panel="numbers">
+                            <div class="form-group"><label class="form-label">Format</label>
                                 <select id="pn-format" class="form-control">
-                                    <option value="n">1, 2, 3&hellip;</option>
-                                    <option value="page-n" selected>Page 1, Page 2&hellip;</option>
-                                    <option value="n-of-total">1 of N, 2 of N&hellip;</option>
-                                    <option value="page-n-of-total">Page 1 of N&hellip;</option>
-                                </select>
+                                    <option value="{n}">1, 2, 3…</option>
+                                    <option value="Page {n}" selected>Page 1, Page 2…</option>
+                                    <option value="{n} of {total}">1 of N…</option>
+                                    <option value="Page {n} of {total}">Page 1 of N…</option>
+                                </select></div>
+                            <div class="form-row">
+                                <div class="form-group"><label class="form-label">Position</label>
+                                    <select id="pn-pos" class="form-control">
+                                        <option value="bottom-center" selected>Bottom centre</option>
+                                        <option value="bottom-right">Bottom right</option>
+                                        <option value="bottom-left">Bottom left</option>
+                                        <option value="top-center">Top centre</option>
+                                        <option value="top-right">Top right</option>
+                                        <option value="top-left">Top left</option>
+                                    </select></div>
+                                <div class="form-group"><label class="form-label">Start at</label>
+                                    <input type="number" id="pn-start" class="form-control" value="1" min="0"></div>
+                            </div>
+                            <button class="btn btn--primary btn--full-width" id="pn-apply">Add Page Numbers</button>
+                            <hr class="divider">
+                            <h4 class="side-subtitle">Header &amp; Footer</h4>
+                            <p class="hint hint--inline">Placeholders: {page} {total} {date} {filename}</p>
+                            <div class="form-row">
+                                <div class="form-group"><label class="form-label">Header L</label><input type="text" id="hf-hl" class="form-control"></div>
+                                <div class="form-group"><label class="form-label">Header C</label><input type="text" id="hf-hc" class="form-control"></div>
+                                <div class="form-group"><label class="form-label">Header R</label><input type="text" id="hf-hr" class="form-control"></div>
                             </div>
                             <div class="form-row">
-                                <div class="form-group">
-                                    <label class="form-label">Position:</label>
-                                    <select id="pn-position" class="form-control">
-                                        <option value="bottom-center" selected>Bottom Center</option>
-                                        <option value="bottom-right">Bottom Right</option>
-                                        <option value="bottom-left">Bottom Left</option>
-                                        <option value="top-center">Top Center</option>
-                                        <option value="top-right">Top Right</option>
-                                        <option value="top-left">Top Left</option>
-                                    </select>
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">Start At:</label>
-                                    <input type="number" id="pn-start" class="form-control" value="1" min="0">
-                                </div>
+                                <div class="form-group"><label class="form-label">Footer L</label><input type="text" id="hf-fl" class="form-control"></div>
+                                <div class="form-group"><label class="form-label">Footer C</label><input type="text" id="hf-fc" class="form-control"></div>
+                                <div class="form-group"><label class="form-label">Footer R</label><input type="text" id="hf-fr" class="form-control"></div>
                             </div>
-                            <div class="form-group">
-                                <label class="form-label">Font Size:</label>
-                                <input type="number" id="pn-font-size" class="form-control" value="10" min="6" max="36">
-                            </div>
-                            <button id="pn-apply-btn" class="btn btn--primary btn--full-width">Add Page Numbers &amp; Save</button>
-                        </div>
+                            <button class="btn btn--primary btn--full-width" id="hf-apply">Add Header/Footer</button>
+                        </section>
 
-                        <!-- Header/Footer section -->
-                        <div class="wm-section-panel hidden" id="wm-section-headerfooter">
-                            <p class="fillsign-hint">Placeholders: {page}, {total}, {date}, {filename}</p>
-                            <div class="form-group">
-                                <label class="form-label">Header Left:</label>
-                                <input type="text" id="hf-header-left" class="form-control" placeholder="e.g. {filename}">
+                        <section class="sub-panel hidden" data-panel="bates">
+                            <p class="hint hint--inline">Sequential legal numbering, e.g. <code>BATES000001</code>.</p>
+                            <div class="form-row">
+                                <div class="form-group"><label class="form-label">Prefix</label>
+                                    <input type="text" id="bates-prefix" class="form-control" value="BATES"></div>
+                                <div class="form-group"><label class="form-label">Suffix</label>
+                                    <input type="text" id="bates-suffix" class="form-control"></div>
                             </div>
-                            <div class="form-group">
-                                <label class="form-label">Header Center:</label>
-                                <input type="text" id="hf-header-center" class="form-control">
+                            <div class="form-row">
+                                <div class="form-group"><label class="form-label">Start</label>
+                                    <input type="number" id="bates-start" class="form-control" value="1" min="0"></div>
+                                <div class="form-group"><label class="form-label">Digits</label>
+                                    <input type="number" id="bates-digits" class="form-control" value="6" min="1" max="12"></div>
                             </div>
-                            <div class="form-group">
-                                <label class="form-label">Header Right:</label>
-                                <input type="text" id="hf-header-right" class="form-control" placeholder="e.g. {date}">
-                            </div>
-                            <div class="form-group">
-                                <label class="form-label">Footer Left:</label>
-                                <input type="text" id="hf-footer-left" class="form-control">
-                            </div>
-                            <div class="form-group">
-                                <label class="form-label">Footer Center:</label>
-                                <input type="text" id="hf-footer-center" class="form-control">
-                            </div>
-                            <div class="form-group">
-                                <label class="form-label">Footer Right:</label>
-                                <input type="text" id="hf-footer-right" class="form-control" placeholder="e.g. Page {page} of {total}">
-                            </div>
-                            <div class="form-group">
-                                <label class="form-label">Font Size:</label>
-                                <input type="number" id="hf-font-size" class="form-control" value="9" min="6" max="24">
-                            </div>
-                            <button id="hf-apply-btn" class="btn btn--primary btn--full-width">Add Header/Footer &amp; Save</button>
-                        </div>
+                            <div class="form-group"><label class="form-label">Position</label>
+                                <select id="bates-pos" class="form-control">
+                                    <option value="bottom-right" selected>Bottom right</option>
+                                    <option value="bottom-center">Bottom centre</option>
+                                    <option value="bottom-left">Bottom left</option>
+                                    <option value="top-right">Top right</option>
+                                </select></div>
+                            <button class="btn btn--primary btn--full-width" id="bates-apply">Apply Bates Numbering</button>
+                        </section>
                     </div>
+                    <div class="side-footer">
+                        <button class="btn btn--primary btn--full-width" id="stamp-save">💾 Save PDF</button>
+                    </div>
+                </aside>
+            </div>
+        </div>
+
+        <!-- =============================== OCR ============================== -->
+        <div class="tab-content" id="ocr-tab">
+            <div class="tool-header">
+                <h2>OCR — Make Scanned PDFs Searchable</h2>
+                <p>Recognised text is written back as a real invisible text layer, so the PDF becomes searchable and selectable</p>
+            </div>
+            <div class="file-drop-zone" data-drop="ocr">
+                <p>Drop a scanned PDF here or click to select</p>
+                <input type="file" id="ocr-file" accept=".pdf" hidden>
+                <button class="btn btn--primary" data-pick="ocr-file">Select PDF</button>
+            </div>
+
+            <div class="panel hidden" id="ocr-workspace">
+                <div id="ocr-summary" class="summary-box"></div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Language</label>
+                        <select id="ocr-lang" class="form-control">
+                            <option value="eng" selected>English</option>
+                            <option value="fra">French</option>
+                            <option value="deu">German</option>
+                            <option value="spa">Spanish</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Pages</label>
+                        <select id="ocr-scope" class="form-control">
+                            <option value="auto" selected>Only pages that need it</option>
+                            <option value="all">All pages</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="progress-bar hidden" id="ocr-bar">
+                    <div class="progress-fill" id="ocr-fill"></div>
+                    <span class="progress-text" id="ocr-pct">0%</span>
+                </div>
+                <p id="ocr-status" class="muted"></p>
+                <div class="action-buttons">
+                    <button class="btn btn--primary" id="ocr-run">Run OCR</button>
+                    <button class="btn btn--outline" id="ocr-save" disabled>💾 Save Searchable PDF</button>
                 </div>
             </div>
         </div>
 
-        <!-- Compress Tab -->
+        <!-- ============================ COMPRESS ============================ -->
         <div class="tab-content" id="compress-tab">
             <div class="tool-header">
                 <h2>Compress PDF</h2>
-                <p>Shrink file size by re-encoding pages as optimized images &mdash; best for scanned or image-heavy PDFs</p>
+                <p>Recompresses images and cleans the file — your text stays real vector text, still searchable</p>
             </div>
-            <div class="file-drop-zone" id="compress-drop-zone">
-                <p>Drop a PDF file here or click to select</p>
-                <input type="file" id="compress-file-input" accept=".pdf" style="display: none;">
-                <button class="btn btn--primary" onclick="document.getElementById('compress-file-input').click()">Select PDF</button>
+            <div class="file-drop-zone" data-drop="compress">
+                <p>Drop a PDF here or click to select</p>
+                <input type="file" id="compress-file" accept=".pdf" hidden>
+                <button class="btn btn--primary" data-pick="compress-file">Select PDF</button>
             </div>
-
-            <div class="compress-controls hidden" id="compress-controls">
-                <div class="compress-summary" id="compress-summary"></div>
+            <div class="panel hidden" id="compress-workspace">
+                <div id="compress-summary" class="summary-box"></div>
                 <div class="form-group">
-                    <label class="form-label">Compression Level:</label>
+                    <label class="form-label">Compression level</label>
                     <select id="compress-level" class="form-control">
-                        <option value="low">Low (best quality, larger file)</option>
-                        <option value="medium" selected>Medium (balanced)</option>
-                        <option value="high">High (smallest file, lower quality)</option>
+                        <option value="low">Low — best quality</option>
+                        <option value="medium" selected>Medium — balanced</option>
+                        <option value="high">High — smallest file</option>
                     </select>
                 </div>
-                <p class="fillsign-hint">Compression rasterizes each page to an image, so text will no longer be selectable in the compressed copy. Use Low for documents where clarity matters most.</p>
-                <div class="action-buttons">
-                    <button id="compress-pdf-btn" class="btn btn--primary">Compress PDF</button>
-                </div>
-                <div class="compress-result hidden" id="compress-result"></div>
+                <div class="action-buttons"><button class="btn btn--primary" id="compress-run">Compress</button></div>
+                <div id="compress-result" class="result-box hidden"></div>
             </div>
         </div>
 
-        <!-- Protect & Redact Tab -->
+        <!-- ============================= PROTECT ============================ -->
         <div class="tab-content" id="protect-tab">
             <div class="tool-header">
-                <h2>Protect &amp; Redact</h2>
-                <p>Permanently black out sensitive content, or lock your PDF with a password</p>
+                <h2>Protect with a Password</h2>
+                <p>Real AES-256 encryption applied to the document itself — pages are never flattened to images</p>
             </div>
-            <div class="file-drop-zone" id="protect-drop-zone">
-                <p>Drop a PDF file here or click to select</p>
-                <input type="file" id="protect-file-input" accept=".pdf" style="display: none;">
-                <button class="btn btn--primary" onclick="document.getElementById('protect-file-input').click()">Select PDF</button>
+            <div class="file-drop-zone" data-drop="protect">
+                <p>Drop a PDF here or click to select</p>
+                <input type="file" id="protect-file" accept=".pdf" hidden>
+                <button class="btn btn--primary" data-pick="protect-file">Select PDF</button>
             </div>
-
-            <div class="protect-controls hidden" id="protect-controls">
-                <div class="wm-section-tabs">
-                    <button class="protect-section-btn active" data-protectsection="redact">Redact</button>
-                    <button class="protect-section-btn" data-protectsection="password">Password Protect</button>
+            <div class="panel hidden" id="protect-workspace">
+                <div id="protect-summary" class="summary-box"></div>
+                <div class="form-group">
+                    <label class="form-label">Open password (required to view)</label>
+                    <input type="password" id="protect-user-pw" class="form-control" placeholder="Enter a password">
                 </div>
-
-                <!-- Redact section -->
-                <div class="protect-section-panel" id="protect-section-redact">
-                    <p class="fillsign-hint">Draw a box over any text or image to redact. Redacted pages are permanently flattened to an image so the covered content cannot be recovered.</p>
-                    <div class="redact-toolbar">
-                        <button id="redact-prev-page-btn" class="btn btn--sm" disabled>◀</button>
-                        <span id="redact-page-info">-/-</span>
-                        <button id="redact-next-page-btn" class="btn btn--sm" disabled>▶</button>
-                        <button id="redact-undo-mark-btn" class="btn btn--sm">↶ Undo Mark</button>
-                        <button id="redact-clear-page-btn" class="btn btn--sm">Clear Page Marks</button>
-                    </div>
-                    <div class="fillsign-page-wrap" id="redact-page-wrap">
-                        <canvas id="redact-pdf-canvas"></canvas>
-                        <canvas id="redact-mark-canvas" class="redact-mark-canvas"></canvas>
-                    </div>
-                    <div class="action-buttons">
-                        <button id="apply-redactions-btn" class="btn btn--primary">Apply Redactions &amp; Save</button>
+                <div class="form-group">
+                    <label class="form-label">Owner password (optional — controls permissions)</label>
+                    <input type="password" id="protect-owner-pw" class="form-control" placeholder="Defaults to the open password">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Allow recipients to…</label>
+                    <div class="checkbox-grid">
+                        <label class="checkbox-row"><input type="checkbox" id="perm-print" checked> Print</label>
+                        <label class="checkbox-row"><input type="checkbox" id="perm-copy"> Copy text</label>
+                        <label class="checkbox-row"><input type="checkbox" id="perm-modify"> Modify</label>
+                        <label class="checkbox-row"><input type="checkbox" id="perm-annot"> Annotate</label>
                     </div>
                 </div>
+                <div class="action-buttons">
+                    <button class="btn btn--primary" id="protect-run">🔒 Encrypt PDF</button>
+                    <button class="btn btn--outline" id="protect-remove">🔓 Remove Password</button>
+                </div>
+            </div>
+        </div>
 
-                <!-- Password section -->
-                <div class="protect-section-panel hidden" id="protect-section-password">
-                    <p class="fillsign-hint">Sets a real PDF open password using AES encryption. Since browsers can't encrypt the original vector PDF, protected copies are rebuilt from page images (text will no longer be selectable).</p>
-                    <div class="form-group">
-                        <label class="form-label">Open Password (required to view):</label>
-                        <input type="password" id="protect-user-password" class="form-control" placeholder="Enter a password">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Owner Password (optional, controls permissions):</label>
-                        <input type="password" id="protect-owner-password" class="form-control" placeholder="Leave blank to reuse open password">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Permissions:</label>
-                        <div class="permission-checks">
-                            <label><input type="checkbox" id="perm-print" checked> Allow printing</label>
-                            <label><input type="checkbox" id="perm-copy"> Allow copying content</label>
-                            <label><input type="checkbox" id="perm-modify"> Allow modification</label>
+        <!-- ============================== REDACT ============================ -->
+        <div class="tab-content" id="redact-tab">
+            <div class="tool-header">
+                <h2>Redact</h2>
+                <p>Content under a redaction is deleted from the file — not just painted over. The rest of the page stays vector.</p>
+            </div>
+            <div class="file-drop-zone" data-drop="redact">
+                <p>Drop a PDF here or click to select</p>
+                <input type="file" id="redact-file" accept=".pdf" hidden>
+                <button class="btn btn--primary" data-pick="redact-file">Select PDF</button>
+            </div>
+
+            <div class="workspace hidden" id="redact-workspace">
+                <div class="workspace__main">
+                    <div class="viewer-toolbar">
+                        <div class="tool-group">
+                            <button class="btn btn--sm" data-nav="redact" data-dir="-1">◀</button>
+                            <span class="page-indicator" id="redact-page-info">-/-</span>
+                            <button class="btn btn--sm" data-nav="redact" data-dir="1">▶</button>
+                        </div>
+                        <div class="tool-group">
+                            <button class="btn btn--sm" id="redact-undo">↶ Undo mark</button>
+                            <button class="btn btn--sm" id="redact-clear">Clear page</button>
                         </div>
                     </div>
-                    <div class="action-buttons">
-                        <button id="apply-password-btn" class="btn btn--primary">Protect PDF with Password</button>
+                    <p class="hint">Drag on the page to mark an area for redaction.</p>
+                    <div class="page-holder" id="redact-holder">
+                        <img class="page-image" id="redact-page-img" alt="PDF page">
+                        <div class="overlay overlay--draw" id="redact-overlay"></div>
                     </div>
                 </div>
+                <aside class="workspace__side">
+                    <div class="side-header"><h4>Find &amp; Redact</h4></div>
+                    <div class="side-body">
+                        <div class="form-group">
+                            <label class="form-label">Redact every occurrence of</label>
+                            <input type="text" id="redact-term" class="form-control" placeholder="e.g. an account number">
+                            <button class="btn btn--sm btn--full-width" id="redact-search">Mark &amp; redact all matches</button>
+                        </div>
+                        <label class="checkbox-row"><input type="checkbox" id="redact-images"> Also remove images touched by a redaction</label>
+                        <div id="redact-count" class="muted"></div>
+                    </div>
+                    <div class="side-footer">
+                        <button class="btn btn--primary btn--full-width" id="redact-apply">⬛ Apply &amp; Save</button>
+                    </div>
+                </aside>
             </div>
+        </div>
+
+        <!-- ============================== EXPORT =========================== -->
+        <div class="tab-content" id="export-tab">
+            <div class="tool-header">
+                <h2>Export &amp; Convert</h2>
+                <p>Turn a PDF into Word-ready HTML, spreadsheets, plain text or images</p>
+            </div>
+            <div class="file-drop-zone" data-drop="export">
+                <p>Drop a PDF here or click to select</p>
+                <input type="file" id="export-file" accept=".pdf" hidden>
+                <button class="btn btn--primary" data-pick="export-file">Select PDF</button>
+            </div>
+            <div class="panel hidden" id="export-workspace">
+                <div id="export-summary" class="summary-box"></div>
+                <div class="export-grid">
+                    <button class="export-card" id="export-doc">
+                        <span class="export-icon">📄</span><strong>Word / HTML</strong>
+                        <small>Opens in Word with layout preserved</small>
+                    </button>
+                    <button class="export-card" id="export-text">
+                        <span class="export-icon">📝</span><strong>Plain text</strong>
+                        <small>All text content as .txt</small>
+                    </button>
+                    <button class="export-card" id="export-tables">
+                        <span class="export-icon">📊</span><strong>Tables → CSV</strong>
+                        <small>Detects ruled tables, one CSV each</small>
+                    </button>
+                    <button class="export-card" id="export-images">
+                        <span class="export-icon">🖼️</span><strong>Embedded images</strong>
+                        <small>Extracts original images at full quality</small>
+                    </button>
+                    <button class="export-card" id="export-pages">
+                        <span class="export-icon">🏞️</span><strong>Pages → PNG</strong>
+                        <small>Render each page as an image</small>
+                    </button>
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label class="form-label">Image DPI</label>
+                        <input type="number" id="export-dpi" class="form-control" value="150" min="36" max="600"></div>
+                    <div class="form-group"><label class="form-label">Pages (blank = all)</label>
+                        <input type="text" id="export-pages-spec" class="form-control" placeholder="1-3, 5"></div>
+                </div>
+                <div id="export-result" class="result-box hidden"></div>
+            </div>
+        </div>
+
+        <!-- ============================= COMPARE =========================== -->
+        <div class="tab-content" id="compare-tab">
+            <div class="tool-header">
+                <h2>Compare Two PDFs</h2>
+                <p>Word-level differences between two versions, with the changes highlighted in a downloadable copy</p>
+            </div>
+            <div class="compare-inputs">
+                <div class="file-drop-zone file-drop-zone--half" data-drop="compareA">
+                    <p><strong>Original</strong></p>
+                    <input type="file" id="compareA-file" accept=".pdf" hidden>
+                    <button class="btn btn--secondary" data-pick="compareA-file">Select original</button>
+                    <div class="muted" id="compareA-name"></div>
+                </div>
+                <div class="file-drop-zone file-drop-zone--half" data-drop="compareB">
+                    <p><strong>Revised</strong></p>
+                    <input type="file" id="compareB-file" accept=".pdf" hidden>
+                    <button class="btn btn--secondary" data-pick="compareB-file">Select revised</button>
+                    <div class="muted" id="compareB-name"></div>
+                </div>
+            </div>
+            <div class="action-buttons">
+                <button class="btn btn--primary" id="compare-run" disabled>⚖️ Compare</button>
+                <button class="btn btn--outline" id="compare-download" disabled>💾 Save highlighted copy</button>
+            </div>
+            <div id="compare-result" class="compare-result"></div>
         </div>
     </div>
 
-    <!-- Signature Modal -->
-    <div id="signature-modal" class="modal hidden">
-        <div class="modal__backdrop" id="signature-modal-backdrop"></div>
+    <!-- Signature modal -->
+    <div id="sig-modal" class="modal hidden">
+        <div class="modal__backdrop" data-sigclose></div>
         <div class="modal__dialog">
             <div class="modal__header">
-                <h3 id="signature-modal-title">Create Signature</h3>
-                <button class="modal__close" id="signature-modal-close">&times;</button>
+                <h3 id="sig-title">Create Signature</h3>
+                <button class="modal__close" data-sigclose>&times;</button>
             </div>
             <div class="modal__body">
-                <div class="sig-mode-tabs">
-                    <button class="sig-mode-btn active" data-sigmode="draw">Draw</button>
-                    <button class="sig-mode-btn" data-sigmode="type">Type</button>
-                    <button class="sig-mode-btn" data-sigmode="upload">Upload</button>
+                <div class="sub-tabs">
+                    <button class="sub-tab active" data-sigmode="draw">Draw</button>
+                    <button class="sub-tab" data-sigmode="type">Type</button>
+                    <button class="sub-tab" data-sigmode="upload">Upload</button>
                 </div>
-
-                <div class="sig-mode-panel" id="sig-mode-draw">
-                    <canvas id="signature-draw-canvas" class="signature-draw-canvas" width="500" height="180"></canvas>
+                <div class="sub-panel" data-sigpanel="draw">
+                    <canvas id="sig-canvas" class="sig-canvas" width="520" height="180"></canvas>
                     <div class="sig-actions">
-                        <label class="tool-option">Color: <input type="color" id="signature-draw-color" value="#1a1a2e"></label>
-                        <button class="btn btn--sm" id="signature-draw-clear-btn">Clear</button>
+                        <label class="tool-option">Colour <input type="color" id="sig-color" value="#12123a"></label>
+                        <button class="btn btn--sm" id="sig-clear">Clear</button>
                     </div>
                 </div>
-
-                <div class="sig-mode-panel hidden" id="sig-mode-type">
-                    <input type="text" id="signature-type-input" class="form-control" placeholder="Type your name">
-                    <select id="signature-type-font" class="form-control">
+                <div class="sub-panel hidden" data-sigpanel="type">
+                    <input type="text" id="sig-typed" class="form-control" placeholder="Type your name">
+                    <select id="sig-font" class="form-control">
                         <option value="'Brush Script MT', cursive">Brush Script</option>
                         <option value="'Segoe Script', cursive">Segoe Script</option>
                         <option value="'Lucida Handwriting', cursive">Lucida Handwriting</option>
-                        <option value="cursive">Cursive (default)</option>
+                        <option value="cursive">Cursive</option>
                     </select>
-                    <canvas id="signature-type-canvas" class="signature-draw-canvas" width="500" height="180"></canvas>
+                    <canvas id="sig-type-canvas" class="sig-canvas" width="520" height="180"></canvas>
                 </div>
-
-                <div class="sig-mode-panel hidden" id="sig-mode-upload">
-                    <input type="file" id="signature-upload-input" accept="image/*" class="form-control">
-                    <canvas id="signature-upload-canvas" class="signature-draw-canvas" width="500" height="180"></canvas>
+                <div class="sub-panel hidden" data-sigpanel="upload">
+                    <input type="file" id="sig-upload" accept="image/*" class="form-control">
+                    <canvas id="sig-upload-canvas" class="sig-canvas" width="520" height="180"></canvas>
                 </div>
             </div>
             <div class="modal__footer">
-                <button class="btn btn--outline" id="signature-modal-cancel">Cancel</button>
-                <button class="btn btn--primary" id="signature-modal-use-btn">Use This Signature</button>
+                <button class="btn btn--outline" data-sigclose>Cancel</button>
+                <button class="btn btn--primary" id="sig-use">Use this signature</button>
             </div>
         </div>
     </div>
 
-    <!-- Error Display -->
-    <div id="error-display" class="error-display hidden">
-        <div class="error-content">
-            <h3>⚠️ Application Error</h3>
-            <p id="error-message">An error occurred while loading the application.</p>
-            <button id="retry-btn" class="btn btn--primary">Retry</button>
+    <!-- Text edit modal -->
+    <div id="text-modal" class="modal hidden">
+        <div class="modal__backdrop" data-textclose></div>
+        <div class="modal__dialog modal__dialog--sm">
+            <div class="modal__header">
+                <h3>Edit text</h3>
+                <button class="modal__close" data-textclose>&times;</button>
+            </div>
+            <div class="modal__body">
+                <p class="muted" id="text-modal-meta"></p>
+                <textarea id="text-modal-input" class="form-control" rows="3"></textarea>
+            </div>
+            <div class="modal__footer">
+                <button class="btn btn--outline" data-textclose>Cancel</button>
+                <button class="btn btn--primary" id="text-modal-apply">Replace text</button>
+            </div>
         </div>
     </div>
 
-    <!-- Footer -->
     <footer class="footer">
         <div class="footer__content">
-            <p>&copy; 2025 Advanced PDF Suite v3.0 | Email: <a href="mailto:audit.vipin@gmail.com" target="_blank">audit.vipin@gmail.com</a></p>
+            <p>&copy; 2026 Advanced PDF Suite v4.0 — powered by PyMuPDF in your browser |
+               <a href="mailto:audit.vipin@gmail.com">audit.vipin@gmail.com</a></p>
         </div>
     </footer>
 
-    <script>
-        // Initialize PDF.js worker path immediately
-        if (typeof pdfjsLib !== 'undefined') {
-            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
-            console.log('PDF.js worker configured');
-        }
-
-        // Simple initialization check
-        function checkLibrariesAndInit() {
-            console.log('Checking libraries...');
-            
-            const hasPDFJS = typeof pdfjsLib !== 'undefined';
-            const hasPDFLib = typeof PDFLib !== 'undefined';
-            const hasJSZip = typeof JSZip !== 'undefined';
-            const hasTesseract = typeof Tesseract !== 'undefined';
-            const hasJsPDF = typeof window.jspdf !== 'undefined' && typeof window.jspdf.jsPDF !== 'undefined';
-
-            console.log('PDF.js available:', hasPDFJS);
-            console.log('PDF-lib available:', hasPDFLib);
-            console.log('JSZip available:', hasJSZip);
-            console.log('Tesseract.js available:', hasTesseract);
-            console.log('jsPDF available:', hasJsPDF);
-
-            if (hasPDFJS && hasPDFLib && hasJSZip && hasTesseract && hasJsPDF) {
-                console.log('All libraries loaded, initializing...');
-                hideInitLoading();
-                initializeAdvancedPDFSuite();
-            } else {
-                console.log('Waiting for libraries...');
-                setTimeout(checkLibrariesAndInit, 100);
-            }
-        }
-
-        function hideInitLoading() {
-            const initLoading = document.getElementById('init-loading');
-            const mainContainer = document.getElementById('main-container');
-            
-            if (initLoading) initLoading.style.display = 'none';
-            if (mainContainer) mainContainer.style.display = 'flex';
-        }
-
-        function showError(message) {
-            console.error('Initialization Error:', message);
-            const initLoading = document.getElementById('init-loading');
-            const errorDisplay = document.getElementById('error-display');
-            const errorMessage = document.getElementById('error-message');
-            
-            if (initLoading) initLoading.style.display = 'none';
-            if (errorDisplay && errorMessage) {
-                errorMessage.textContent = message;
-                errorDisplay.classList.remove('hidden');
-            }
-        }
-
-        // Start checking libraries after a short delay
-        setTimeout(checkLibrariesAndInit, 500);
-
-        // Retry functionality
-        document.addEventListener('DOMContentLoaded', function() {
-            const retryBtn = document.getElementById('retry-btn');
-            if (retryBtn) {
-                retryBtn.addEventListener('click', function() {
-                    location.reload();
-                });
-            }
-        });
-    </script>
-
-    <!-- Main App Script -->
     <script src="app.js"></script>
 </body>
 </html>
