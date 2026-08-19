@@ -10,6 +10,7 @@
     <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 </head>
 <body>
     <!-- Header Section -->
@@ -36,6 +37,10 @@
             <button class="tab-btn" data-tab="merge">🔗 Merge</button>
             <button class="tab-btn" data-tab="split">✂️ Split</button>
             <button class="tab-btn" data-tab="organize">📚 Organize</button>
+            <button class="tab-btn" data-tab="fillsign">🖊️ Fill &amp; Sign</button>
+            <button class="tab-btn" data-tab="watermark">💧 Watermark &amp; Stamps</button>
+            <button class="tab-btn" data-tab="compress">🗜️ Compress</button>
+            <button class="tab-btn" data-tab="protect">🔒 Protect &amp; Redact</button>
         </nav>
 
         <!-- Status Container -->
@@ -252,6 +257,392 @@
                 </div>
             </div>
         </div>
+
+        <!-- Fill & Sign Tab -->
+        <div class="tab-content" id="fillsign-tab">
+            <div class="tool-header">
+                <h2>Fill &amp; Sign</h2>
+                <p>Add your signature, initials, text, dates and checkmarks, or fill in form fields</p>
+            </div>
+            <div class="file-drop-zone" id="fillsign-drop-zone">
+                <p>Drop a PDF file here or click to select</p>
+                <input type="file" id="fillsign-file-input" accept=".pdf" style="display: none;">
+                <button class="btn btn--primary" onclick="document.getElementById('fillsign-file-input').click()">Select PDF</button>
+            </div>
+
+            <div class="fillsign-controls hidden" id="fillsign-controls">
+                <div class="fillsign-toolbar">
+                    <div class="tool-group">
+                        <button class="fs-tool-btn active" data-fstool="SIGNATURE" title="Place your signature">✍️ Signature</button>
+                        <button class="fs-tool-btn" data-fstool="INITIALS" title="Place your initials">🔤 Initials</button>
+                        <button class="fs-tool-btn" data-fstool="TEXT" title="Add text">T Text</button>
+                        <button class="fs-tool-btn" data-fstool="DATE" title="Add today's date">📅 Date</button>
+                        <button class="fs-tool-btn" data-fstool="CHECK" title="Add a checkmark">✔️ Check</button>
+                        <button class="fs-tool-btn" data-fstool="CROSS" title="Add an X mark">✖️ X</button>
+                    </div>
+                    <div class="tool-group">
+                        <button id="fs-prev-page-btn" class="btn btn--sm" disabled>◀</button>
+                        <span id="fs-page-info">-/-</span>
+                        <button id="fs-next-page-btn" class="btn btn--sm" disabled>▶</button>
+                    </div>
+                    <div class="tool-group">
+                        <button id="fs-delete-selected-btn" class="btn btn--sm" disabled>🗑️ Remove</button>
+                        <button id="fs-clear-all-btn" class="btn btn--sm">❌ Clear All</button>
+                    </div>
+                </div>
+
+                <p class="fillsign-hint">Choose a tool, then click on the page to place it. Drag a placed item to move it, or select it and click Remove.</p>
+
+                <div class="fillsign-body">
+                    <div class="fillsign-canvas-area">
+                        <div class="fillsign-page-wrap" id="fillsign-page-wrap">
+                            <canvas id="fillsign-pdf-canvas"></canvas>
+                            <div id="fillsign-overlay" class="fillsign-overlay"></div>
+                        </div>
+                    </div>
+
+                    <div class="fillsign-sidebar">
+                        <div class="sidebar-header"><h4>Form Fields</h4></div>
+                        <div id="fillsign-form-fields" class="fillsign-form-fields">
+                            <p class="fillsign-empty-note">No fillable form fields detected yet.</p>
+                        </div>
+                        <label class="fillsign-flatten-option">
+                            <input type="checkbox" id="fillsign-flatten-checkbox" checked>
+                            Flatten form fields on save
+                        </label>
+                    </div>
+                </div>
+
+                <div class="action-buttons">
+                    <button id="fillsign-save-btn" class="btn btn--primary">💾 Save Signed PDF</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Watermark, Stamps & Page Numbers Tab -->
+        <div class="tab-content" id="watermark-tab">
+            <div class="tool-header">
+                <h2>Watermark, Stamps &amp; Page Numbers</h2>
+                <p>Stamp text/image watermarks, approval stamps, and page numbers or headers/footers across your document</p>
+            </div>
+            <div class="file-drop-zone" id="watermark-drop-zone">
+                <p>Drop a PDF file here or click to select</p>
+                <input type="file" id="watermark-file-input" accept=".pdf" style="display: none;">
+                <button class="btn btn--primary" onclick="document.getElementById('watermark-file-input').click()">Select PDF</button>
+            </div>
+
+            <div class="watermark-controls hidden" id="watermark-controls">
+                <div class="watermark-layout">
+                    <div class="watermark-preview-area">
+                        <div class="wm-page-nav">
+                            <button id="wm-prev-page-btn" class="btn btn--sm" disabled>◀</button>
+                            <span id="wm-page-info">-/-</span>
+                            <button id="wm-next-page-btn" class="btn btn--sm" disabled>▶</button>
+                        </div>
+                        <div class="fillsign-page-wrap" id="wm-page-wrap">
+                            <canvas id="wm-pdf-canvas"></canvas>
+                            <canvas id="wm-preview-canvas" class="wm-preview-canvas"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="watermark-options">
+                        <div class="wm-section-tabs">
+                            <button class="wm-section-btn active" data-wmsection="watermark">Watermark</button>
+                            <button class="wm-section-btn" data-wmsection="stamp">Stamps</button>
+                            <button class="wm-section-btn" data-wmsection="numbering">Page Numbers</button>
+                            <button class="wm-section-btn" data-wmsection="headerfooter">Header/Footer</button>
+                        </div>
+
+                        <!-- Watermark section -->
+                        <div class="wm-section-panel" id="wm-section-watermark">
+                            <div class="form-group">
+                                <label class="form-label">Type:</label>
+                                <select id="wm-type" class="form-control">
+                                    <option value="text">Text</option>
+                                    <option value="image">Image</option>
+                                </select>
+                            </div>
+                            <div class="form-group" id="wm-text-group">
+                                <label class="form-label">Watermark Text:</label>
+                                <input type="text" id="wm-text" class="form-control" value="CONFIDENTIAL" maxlength="60">
+                            </div>
+                            <div class="form-group hidden" id="wm-image-group">
+                                <label class="form-label">Image:</label>
+                                <input type="file" id="wm-image-input" accept="image/*" class="form-control">
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label class="form-label">Font Size:</label>
+                                    <input type="number" id="wm-font-size" class="form-control" value="48" min="6" max="200">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Color:</label>
+                                    <input type="color" id="wm-color" value="#c81e1e">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label class="form-label">Opacity: <span id="wm-opacity-value">30%</span></label>
+                                    <input type="range" id="wm-opacity" min="5" max="100" value="30">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Rotation: <span id="wm-rotation-value">45&deg;</span></label>
+                                    <input type="range" id="wm-rotation" min="-90" max="90" value="45">
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Layout:</label>
+                                <select id="wm-layout" class="form-control">
+                                    <option value="center">Single (Centered)</option>
+                                    <option value="tile">Tiled (Repeated)</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Apply To:</label>
+                                <select id="wm-apply-to" class="form-control">
+                                    <option value="all">All Pages</option>
+                                    <option value="range">Page Range</option>
+                                </select>
+                            </div>
+                            <div class="form-group hidden" id="wm-range-group">
+                                <label class="form-label">Pages (e.g., 1-3, 5):</label>
+                                <input type="text" id="wm-range" class="form-control" placeholder="1-3, 5">
+                            </div>
+                            <button id="wm-apply-watermark-btn" class="btn btn--primary btn--full-width">Apply Watermark</button>
+                        </div>
+
+                        <!-- Stamp section -->
+                        <div class="wm-section-panel hidden" id="wm-section-stamp">
+                            <p class="fillsign-hint">Pick a stamp, then click on the page preview to place it.</p>
+                            <div class="stamp-gallery" id="stamp-gallery">
+                                <button class="stamp-btn stamp-btn--approved" data-stamp="APPROVED">APPROVED</button>
+                                <button class="stamp-btn stamp-btn--draft" data-stamp="DRAFT">DRAFT</button>
+                                <button class="stamp-btn stamp-btn--confidential" data-stamp="CONFIDENTIAL">CONFIDENTIAL</button>
+                                <button class="stamp-btn stamp-btn--reviewed" data-stamp="REVIEWED">REVIEWED</button>
+                                <button class="stamp-btn stamp-btn--void" data-stamp="VOID">VOID</button>
+                                <button class="stamp-btn stamp-btn--urgent" data-stamp="URGENT">URGENT</button>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Custom Stamp Text:</label>
+                                <input type="text" id="stamp-custom-text" class="form-control" placeholder="Type a custom stamp label" maxlength="30">
+                                <button id="stamp-custom-add-btn" class="btn btn--sm">Use Custom Stamp</button>
+                            </div>
+                            <p id="stamp-active-note" class="fillsign-hint">No stamp selected.</p>
+                            <button id="wm-clear-stamps-btn" class="btn btn--outline btn--full-width">Clear Placed Stamps</button>
+                            <button id="wm-apply-stamps-btn" class="btn btn--primary btn--full-width">Apply Stamps &amp; Save</button>
+                        </div>
+
+                        <!-- Page numbering section -->
+                        <div class="wm-section-panel hidden" id="wm-section-numbering">
+                            <div class="form-group">
+                                <label class="form-label">Format:</label>
+                                <select id="pn-format" class="form-control">
+                                    <option value="n">1, 2, 3&hellip;</option>
+                                    <option value="page-n" selected>Page 1, Page 2&hellip;</option>
+                                    <option value="n-of-total">1 of N, 2 of N&hellip;</option>
+                                    <option value="page-n-of-total">Page 1 of N&hellip;</option>
+                                </select>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label class="form-label">Position:</label>
+                                    <select id="pn-position" class="form-control">
+                                        <option value="bottom-center" selected>Bottom Center</option>
+                                        <option value="bottom-right">Bottom Right</option>
+                                        <option value="bottom-left">Bottom Left</option>
+                                        <option value="top-center">Top Center</option>
+                                        <option value="top-right">Top Right</option>
+                                        <option value="top-left">Top Left</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Start At:</label>
+                                    <input type="number" id="pn-start" class="form-control" value="1" min="0">
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Font Size:</label>
+                                <input type="number" id="pn-font-size" class="form-control" value="10" min="6" max="36">
+                            </div>
+                            <button id="pn-apply-btn" class="btn btn--primary btn--full-width">Add Page Numbers &amp; Save</button>
+                        </div>
+
+                        <!-- Header/Footer section -->
+                        <div class="wm-section-panel hidden" id="wm-section-headerfooter">
+                            <p class="fillsign-hint">Placeholders: {page}, {total}, {date}, {filename}</p>
+                            <div class="form-group">
+                                <label class="form-label">Header Left:</label>
+                                <input type="text" id="hf-header-left" class="form-control" placeholder="e.g. {filename}">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Header Center:</label>
+                                <input type="text" id="hf-header-center" class="form-control">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Header Right:</label>
+                                <input type="text" id="hf-header-right" class="form-control" placeholder="e.g. {date}">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Footer Left:</label>
+                                <input type="text" id="hf-footer-left" class="form-control">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Footer Center:</label>
+                                <input type="text" id="hf-footer-center" class="form-control">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Footer Right:</label>
+                                <input type="text" id="hf-footer-right" class="form-control" placeholder="e.g. Page {page} of {total}">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Font Size:</label>
+                                <input type="number" id="hf-font-size" class="form-control" value="9" min="6" max="24">
+                            </div>
+                            <button id="hf-apply-btn" class="btn btn--primary btn--full-width">Add Header/Footer &amp; Save</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Compress Tab -->
+        <div class="tab-content" id="compress-tab">
+            <div class="tool-header">
+                <h2>Compress PDF</h2>
+                <p>Shrink file size by re-encoding pages as optimized images &mdash; best for scanned or image-heavy PDFs</p>
+            </div>
+            <div class="file-drop-zone" id="compress-drop-zone">
+                <p>Drop a PDF file here or click to select</p>
+                <input type="file" id="compress-file-input" accept=".pdf" style="display: none;">
+                <button class="btn btn--primary" onclick="document.getElementById('compress-file-input').click()">Select PDF</button>
+            </div>
+
+            <div class="compress-controls hidden" id="compress-controls">
+                <div class="compress-summary" id="compress-summary"></div>
+                <div class="form-group">
+                    <label class="form-label">Compression Level:</label>
+                    <select id="compress-level" class="form-control">
+                        <option value="low">Low (best quality, larger file)</option>
+                        <option value="medium" selected>Medium (balanced)</option>
+                        <option value="high">High (smallest file, lower quality)</option>
+                    </select>
+                </div>
+                <p class="fillsign-hint">Compression rasterizes each page to an image, so text will no longer be selectable in the compressed copy. Use Low for documents where clarity matters most.</p>
+                <div class="action-buttons">
+                    <button id="compress-pdf-btn" class="btn btn--primary">Compress PDF</button>
+                </div>
+                <div class="compress-result hidden" id="compress-result"></div>
+            </div>
+        </div>
+
+        <!-- Protect & Redact Tab -->
+        <div class="tab-content" id="protect-tab">
+            <div class="tool-header">
+                <h2>Protect &amp; Redact</h2>
+                <p>Permanently black out sensitive content, or lock your PDF with a password</p>
+            </div>
+            <div class="file-drop-zone" id="protect-drop-zone">
+                <p>Drop a PDF file here or click to select</p>
+                <input type="file" id="protect-file-input" accept=".pdf" style="display: none;">
+                <button class="btn btn--primary" onclick="document.getElementById('protect-file-input').click()">Select PDF</button>
+            </div>
+
+            <div class="protect-controls hidden" id="protect-controls">
+                <div class="wm-section-tabs">
+                    <button class="protect-section-btn active" data-protectsection="redact">Redact</button>
+                    <button class="protect-section-btn" data-protectsection="password">Password Protect</button>
+                </div>
+
+                <!-- Redact section -->
+                <div class="protect-section-panel" id="protect-section-redact">
+                    <p class="fillsign-hint">Draw a box over any text or image to redact. Redacted pages are permanently flattened to an image so the covered content cannot be recovered.</p>
+                    <div class="redact-toolbar">
+                        <button id="redact-prev-page-btn" class="btn btn--sm" disabled>◀</button>
+                        <span id="redact-page-info">-/-</span>
+                        <button id="redact-next-page-btn" class="btn btn--sm" disabled>▶</button>
+                        <button id="redact-undo-mark-btn" class="btn btn--sm">↶ Undo Mark</button>
+                        <button id="redact-clear-page-btn" class="btn btn--sm">Clear Page Marks</button>
+                    </div>
+                    <div class="fillsign-page-wrap" id="redact-page-wrap">
+                        <canvas id="redact-pdf-canvas"></canvas>
+                        <canvas id="redact-mark-canvas" class="redact-mark-canvas"></canvas>
+                    </div>
+                    <div class="action-buttons">
+                        <button id="apply-redactions-btn" class="btn btn--primary">Apply Redactions &amp; Save</button>
+                    </div>
+                </div>
+
+                <!-- Password section -->
+                <div class="protect-section-panel hidden" id="protect-section-password">
+                    <p class="fillsign-hint">Sets a real PDF open password using AES encryption. Since browsers can't encrypt the original vector PDF, protected copies are rebuilt from page images (text will no longer be selectable).</p>
+                    <div class="form-group">
+                        <label class="form-label">Open Password (required to view):</label>
+                        <input type="password" id="protect-user-password" class="form-control" placeholder="Enter a password">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Owner Password (optional, controls permissions):</label>
+                        <input type="password" id="protect-owner-password" class="form-control" placeholder="Leave blank to reuse open password">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Permissions:</label>
+                        <div class="permission-checks">
+                            <label><input type="checkbox" id="perm-print" checked> Allow printing</label>
+                            <label><input type="checkbox" id="perm-copy"> Allow copying content</label>
+                            <label><input type="checkbox" id="perm-modify"> Allow modification</label>
+                        </div>
+                    </div>
+                    <div class="action-buttons">
+                        <button id="apply-password-btn" class="btn btn--primary">Protect PDF with Password</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Signature Modal -->
+    <div id="signature-modal" class="modal hidden">
+        <div class="modal__backdrop" id="signature-modal-backdrop"></div>
+        <div class="modal__dialog">
+            <div class="modal__header">
+                <h3 id="signature-modal-title">Create Signature</h3>
+                <button class="modal__close" id="signature-modal-close">&times;</button>
+            </div>
+            <div class="modal__body">
+                <div class="sig-mode-tabs">
+                    <button class="sig-mode-btn active" data-sigmode="draw">Draw</button>
+                    <button class="sig-mode-btn" data-sigmode="type">Type</button>
+                    <button class="sig-mode-btn" data-sigmode="upload">Upload</button>
+                </div>
+
+                <div class="sig-mode-panel" id="sig-mode-draw">
+                    <canvas id="signature-draw-canvas" class="signature-draw-canvas" width="500" height="180"></canvas>
+                    <div class="sig-actions">
+                        <label class="tool-option">Color: <input type="color" id="signature-draw-color" value="#1a1a2e"></label>
+                        <button class="btn btn--sm" id="signature-draw-clear-btn">Clear</button>
+                    </div>
+                </div>
+
+                <div class="sig-mode-panel hidden" id="sig-mode-type">
+                    <input type="text" id="signature-type-input" class="form-control" placeholder="Type your name">
+                    <select id="signature-type-font" class="form-control">
+                        <option value="'Brush Script MT', cursive">Brush Script</option>
+                        <option value="'Segoe Script', cursive">Segoe Script</option>
+                        <option value="'Lucida Handwriting', cursive">Lucida Handwriting</option>
+                        <option value="cursive">Cursive (default)</option>
+                    </select>
+                    <canvas id="signature-type-canvas" class="signature-draw-canvas" width="500" height="180"></canvas>
+                </div>
+
+                <div class="sig-mode-panel hidden" id="sig-mode-upload">
+                    <input type="file" id="signature-upload-input" accept="image/*" class="form-control">
+                    <canvas id="signature-upload-canvas" class="signature-draw-canvas" width="500" height="180"></canvas>
+                </div>
+            </div>
+            <div class="modal__footer">
+                <button class="btn btn--outline" id="signature-modal-cancel">Cancel</button>
+                <button class="btn btn--primary" id="signature-modal-use-btn">Use This Signature</button>
+            </div>
+        </div>
     </div>
 
     <!-- Error Display -->
@@ -285,13 +676,15 @@
             const hasPDFLib = typeof PDFLib !== 'undefined';
             const hasJSZip = typeof JSZip !== 'undefined';
             const hasTesseract = typeof Tesseract !== 'undefined';
-            
+            const hasJsPDF = typeof window.jspdf !== 'undefined' && typeof window.jspdf.jsPDF !== 'undefined';
+
             console.log('PDF.js available:', hasPDFJS);
             console.log('PDF-lib available:', hasPDFLib);
             console.log('JSZip available:', hasJSZip);
             console.log('Tesseract.js available:', hasTesseract);
-            
-            if (hasPDFJS && hasPDFLib && hasJSZip && hasTesseract) {
+            console.log('jsPDF available:', hasJsPDF);
+
+            if (hasPDFJS && hasPDFLib && hasJSZip && hasTesseract && hasJsPDF) {
                 console.log('All libraries loaded, initializing...');
                 hideInitLoading();
                 initializeAdvancedPDFSuite();
