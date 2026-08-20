@@ -3,24 +3,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Advanced PDF Suite by Vipin Nair</title>
+    <title>MiyeePDF — Built by Vipin Nair</title>
     <!-- ?v= busts the browser cache on redeploy: without it a stale app.js/style.css
          pair silently breaks the page. Bump APP_VERSION in app.js to match. -->
-    <link rel="stylesheet" href="style.css?v=4.0.1">
-    <!-- Python engine (PyMuPDF via Pyodide) is bootstrapped from app.js -->
+    <link rel="stylesheet" href="style.css?v=4.1.0">
     <script src="https://cdn.jsdelivr.net/pyodide/v314.0.5/full/pyodide.js"></script>
-    <!-- Tesseract.js performs OCR recognition; PyMuPDF writes the text layer -->
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
-    <!-- JSZip bundles multi-file exports -->
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 </head>
 <body>
     <header class="header">
         <div class="header__content">
-            <h1 class="header__title">Advanced PDF Suite</h1>
+            <h1 class="header__title">MiyeePDF <span class="header__byline">Built by Vipin Nair</span></h1>
             <div class="header__right">
-                <span id="engine-badge" class="engine-badge engine-badge--loading" title="Python PDF engine status">
-                    <span class="engine-dot"></span><span id="engine-badge-text">Starting Python engine…</span>
+                <span id="engine-badge" class="engine-badge engine-badge--loading" title="Workspace status">
+                    <span class="engine-dot"></span><span id="engine-badge-text">Preparing…</span>
                 </span>
                 <button id="theme-toggle" class="btn btn--sm theme-toggle" title="Toggle dark mode">🌙</button>
             </div>
@@ -45,12 +42,12 @@
         <div id="engine-loading" class="engine-loading">
             <div class="engine-loading__inner">
                 <div class="loading-spinner"></div>
-                <h3>Starting the Python PDF engine</h3>
-                <p id="engine-loading-step">Downloading Pyodide…</p>
+                <h3>Preparing your workspace</h3>
+                <p id="engine-loading-step">Getting things ready…</p>
                 <div class="progress-bar"><div class="progress-fill" id="engine-progress-fill"></div></div>
                 <p class="engine-loading__note">
-                    PyMuPDF runs entirely in your browser — no file ever leaves your device.
-                    This one-time download (~28&nbsp;MB) is cached for next time.
+                    Everything runs entirely on your device — your files are never uploaded.
+                    First visit takes a moment to set up; after that it starts instantly.
                 </p>
             </div>
         </div>
@@ -127,7 +124,7 @@
         <div class="tab-content" id="pages-tab">
             <div class="tool-header">
                 <h2>Organize Pages</h2>
-                <p>Reorder, rotate, delete, merge and split — rebuilt on PyMuPDF so quality never degrades</p>
+                <p>Reorder, rotate, delete, merge and split — without ever degrading quality</p>
             </div>
             <div class="file-drop-zone" data-drop="pages">
                 <p>Drop one or more PDFs here (multiple files will be merged in order)</p>
@@ -488,6 +485,9 @@
                             <button class="btn btn--sm" data-nav="redact" data-dir="1">▶</button>
                         </div>
                         <div class="tool-group">
+                            <label class="tool-option">Box colour
+                                <input type="color" id="redact-color" value="#000000">
+                            </label>
                             <button class="btn btn--sm" id="redact-undo">↶ Undo mark</button>
                             <button class="btn btn--sm" id="redact-clear">Clear page</button>
                         </div>
@@ -507,6 +507,7 @@
                             <button class="btn btn--sm btn--full-width" id="redact-search">Mark &amp; redact all matches</button>
                         </div>
                         <label class="checkbox-row"><input type="checkbox" id="redact-images"> Also remove images touched by a redaction</label>
+                        <p class="hint hint--inline">The colour only changes the box left behind — the content underneath is always destroyed.</p>
                         <div id="redact-count" class="muted"></div>
                     </div>
                     <div class="side-footer">
@@ -653,11 +654,11 @@
 
     <footer class="footer">
         <div class="footer__content">
-            <p>&copy; 2026 Advanced PDF Suite v4.0 — powered by PyMuPDF in your browser |
+            <p>&copy; 2026 MiyeePDF — Built by Vipin Nair | Your files never leave your device |
                <a href="mailto:audit.vipin@gmail.com">audit.vipin@gmail.com</a></p>
         </div>
     </footer>
 
-    <script src="app.js?v=4.0.1"></script>
+    <script src="app.js?v=4.1.0"></script>
 </body>
 </html>

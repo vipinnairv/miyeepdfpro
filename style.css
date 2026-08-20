@@ -564,6 +564,17 @@ body {
 .header__title {
   margin: 0;
   font-size: var(--font-size-xl);
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-10);
+  flex-wrap: wrap;
+}
+
+.header__byline {
+  font-size: var(--font-size-sm);
+  font-weight: 400;
+  color: var(--color-text-secondary);
+  letter-spacing: 0.02em;
 }
 
 .header__right {
@@ -913,7 +924,9 @@ body {
 
 .redact-box {
   position: absolute;
-  background: rgba(0, 0, 0, 0.88);
+  /* Background is set inline from the colour picker; this is the fallback. */
+  background: #000000;
+  opacity: 0.88;
   border: 1.5px solid #ff3b3b;
 }
 
