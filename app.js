@@ -9,6 +9,9 @@
 /* Python engine bridge                                                */
 /* ------------------------------------------------------------------ */
 
+// Keep in step with the ?v= query on the script/style tags in index.html so a
+// redeploy never leaves a browser running a stale mix of old and new assets.
+const APP_VERSION = '4.0.1';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -37,7 +40,7 @@ class PyEngine {
             await this.pyodide.loadPackage(PYMUPDF_WHEEL);
 
             onStep('Starting PDF engine…', 85);
-            const source = await (await fetch('pdf_engine.py')).text();
+            const source = await (await fetch(`pdf_engine.py?v=${APP_VERSION}`)).text();
             this.pyodide.FS.writeFile('/pdf_engine.py', source);
             this.pyodide.runPython('import sys\nif "/" not in sys.path: sys.path.insert(0, "/")');
             this.module = this.pyodide.pyimport('pdf_engine');
@@ -990,11 +993,40 @@ const OcrTool = {
         if (!targets.length) return UI.toast('Nothing to OCR', 'error');
 
         $('ocr-bar').classList.remove('hidden');
-        const worker = await Tesseract.createWorker($('ocr-lang').value);
+        $('ocr-run').disabled = true;
+
+        // The language pack is ~11 MB on first use. Without this logger the UI
+        // sits silent through the download and looks like it has frozen.
+        const setProgress = (pct, label) => {
+            $('ocr-fill').style.width = `${pct}%`;
+            $('ocr-pct').textContent = `${pct}%`;
+            if (label) $('ocr-status').textContent = label;
+        };
+        setProgress(0, 'Loading OCR engine…');
+
+        let worker;
+        try {
+            worker = await Tesseract.createWorker($('ocr-lang').value, 1, {
+                logger: (m) => {
+                    if (m.status && m.status !== 'recognizing text') {
+                        setProgress(Math.round((m.progress || 0) * 100),
+                                    `${m.status.charAt(0).toUpperCase()}${m.status.slice(1)}…`);
+                    }
+                },
+            });
+        } catch (err) {
+            console.error(err);
+            $('ocr-status').textContent =
+                `Could not load the OCR engine (${err.message}). Check your connection and try again.`;
+            $('ocr-run').disabled = false;
+            return UI.toast('OCR engine failed to load', 'error');
+        }
+
         let done = 0;
         try {
             for (const pno of targets) {
-                $('ocr-status').textContent = `Recognising page ${pno + 1}…`;
+                $('ocr-status').textContent =
+                    `Recognising page ${pno + 1} of ${targets.length === 1 ? pno + 1 : this.pages}…`;
                 // Render at higher DPI: OCR accuracy depends on input resolution.
                 const png = await engine.call('render_page', 'ocr', pno, 200);
                 const url = URL.createObjectURL(new Blob([png], { type: 'image/png' }));
@@ -1007,17 +1039,17 @@ const OcrTool = {
                 URL.revokeObjectURL(url);
 
                 done++;
-                const pct = Math.round((done / targets.length) * 100);
-                $('ocr-fill').style.width = `${pct}%`;
-                $('ocr-pct').textContent = `${pct}%`;
+                setProgress(Math.round((done / targets.length) * 100));
             }
             $('ocr-status').textContent = `Done — ${done} page(s) now carry a searchable text layer.`;
             $('ocr-save').disabled = false;
             UI.toast('OCR complete', 'success');
         } catch (err) {
             console.error(err);
+            $('ocr-status').textContent = `OCR failed: ${err.message}`;
             UI.toast(`OCR failed: ${err.message}`, 'error');
         } finally {
+            $('ocr-run').disabled = false;
             await worker.terminate();
         }
     },
