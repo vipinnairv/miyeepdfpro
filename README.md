@@ -4,7 +4,7 @@
 
 An Acrobat-class PDF suite that runs **entirely in your browser**. No file is ever uploaded — every operation happens locally on your own device.
 
-**Live:** https://vipinnairv.github.io/Miyeepdfpro/
+**Live:** https://vipinnairv.github.io/miyeepdfpro/
 
 ## Features
 
