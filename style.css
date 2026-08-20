@@ -1531,3 +1531,56 @@ body {
   .scan-row .scan-label { display: none; }
   .finding { grid-template-columns: 1fr; gap: var(--space-4); }
 }
+
+/* ==========================================================================
+   Engine boot banner — non-blocking, so the app stays usable while it loads
+   ========================================================================== */
+
+.engine-banner {
+  background: var(--color-bg-2);
+  border-bottom: 1px solid var(--color-border);
+  padding: var(--space-10) var(--space-16) 0;
+}
+
+.engine-banner.hidden { display: none; }
+
+.engine-banner__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  flex-wrap: wrap;
+}
+
+.engine-banner__spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  flex: none;
+}
+
+.engine-banner__text {
+  display: flex;
+  flex-direction: column;
+  font-size: var(--font-size-sm);
+  line-height: 1.35;
+}
+
+.engine-banner__text span { color: var(--color-text-secondary); }
+
+.engine-banner__note {
+  margin-left: auto;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.engine-banner__bar {
+  margin: var(--space-8) 0 var(--space-4);
+  height: 4px;
+}
+
+@media (max-width: 720px) {
+  .engine-banner__note { display: none; }
+}
