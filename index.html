@@ -4,7 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Advanced PDF Suite by Vipin Nair</title>
-    <link rel="stylesheet" href="style.css">
+    <!-- ?v= busts the browser cache on redeploy: without it a stale app.js/style.css
+         pair silently breaks the page. Bump APP_VERSION in app.js to match. -->
+    <link rel="stylesheet" href="style.css?v=4.0.1">
     <!-- Python engine (PyMuPDF via Pyodide) is bootstrapped from app.js -->
     <script src="https://cdn.jsdelivr.net/pyodide/v314.0.5/full/pyodide.js"></script>
     <!-- Tesseract.js performs OCR recognition; PyMuPDF writes the text layer -->
@@ -656,6 +658,6 @@
         </div>
     </footer>
 
-    <script src="app.js"></script>
+    <script src="app.js?v=4.0.1"></script>
 </body>
 </html>
