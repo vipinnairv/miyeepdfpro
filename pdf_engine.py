@@ -101,16 +101,100 @@ def _pick_font(font_name, flags=0):
     return regular
 
 
-def _fit_size(text, font, size, width):
+def _fit_size(text, font, size, width, measurer=None):
     """Shrink a font size until the text fits the width it has to replace."""
     if width <= 0 or not text:
         return size
-    fnt = pymupdf.Font(font)
+    fnt = measurer or pymupdf.Font(font)
     for _ in range(40):
         if fnt.text_length(text, size) <= width or size <= 4:
             break
         size -= 0.5
     return size
+
+
+# Suffixes that say nothing about the face itself. A PDF's BaseFont entry and
+# the name text extraction reports disagree about these constantly — the same
+# font turns up as "IPAGothic Regular" in one and "IPAGothic" in the other, or
+# as "TimesNewRomanPSMT" against "TimesNewRoman".
+_NEUTRAL_FONT_SUFFIXES = ("regular", "roman", "normal", "book", "std", "pro", "mt", "ps")
+
+
+def _norm_font(value):
+    """A font name reduced to the part that identifies the face."""
+    name = (value or "").split("+")[-1].lower()
+    for ch in "-_ .,":
+        name = name.replace(ch, "")
+    trimmed = True
+    while trimmed:
+        trimmed = False
+        for suffix in _NEUTRAL_FONT_SUFFIXES:
+            if len(name) > len(suffix) and name.endswith(suffix):
+                name, trimmed = name[: -len(suffix)], True
+    return name
+
+
+def _same_font(a, b):
+    """Whether two font names refer to the same face.
+
+    Weight and slant words are deliberately *not* stripped, so a regular span
+    never gets matched to the bold cut sitting next to it on the page.
+    """
+    return _norm_font(a) == _norm_font(b)
+
+
+def _grab_embedded_font(doc, page, font_name, text):
+    """Pull the document's *own* font file out of the PDF, if it can be reused.
+
+    Real documents use fonts that do not map onto the base-14 set — a Roboto
+    invoice rewritten in Helvetica looks obviously edited. When the font is
+    embedded we can extract the actual file and write with it.
+
+    Two things stop this from always working. The font may be referenced rather
+    than embedded (nothing to extract), and embedded fonts are usually *subset*
+    to the glyphs the document already uses, so newly typed characters may be
+    missing. Both are checked here; the caller falls back to base-14.
+
+    Returns (buffer, measuring_font) or (None, None). Deliberately returns the
+    buffer rather than registering the font, because this must run *before*
+    redaction while the page still references it, and the font has to be
+    re-registered afterwards.
+    """
+    needed = {c for c in (text or "") if not c.isspace()}
+    for info in page.get_fonts(full=True):
+        xref, basefont = info[0], info[3]
+        if not _same_font(basefont, font_name):
+            continue
+        try:
+            _name, _ext, _ftype, buf = doc.extract_font(xref)
+        except Exception:
+            continue
+        if not buf:
+            continue  # referenced, not embedded — nothing to reuse
+        try:
+            fnt = pymupdf.Font(fontbuffer=buf)
+            if any(not fnt.has_glyph(ord(c)) for c in needed):
+                return None, None  # subset lacks a character being typed
+            return buf, fnt
+        except Exception:
+            continue
+    return None, None
+
+
+def _register_font(page, buf, font_name, flags):
+    """Attach the reused font to the page, or fall back to a base-14 match.
+
+    Returns (fontname, measuring_font, matched_original).
+    """
+    if buf:
+        try:
+            tag = "MPDFembed"
+            page.insert_font(fontname=tag, fontbuffer=buf)
+            return tag, pymupdf.Font(fontbuffer=buf), True
+        except Exception:
+            pass
+    fallback = _pick_font(font_name, int(flags or 0))
+    return fallback, pymupdf.Font(fallback), False
 
 
 def _page_indices(doc, spec):
@@ -221,26 +305,54 @@ def get_spans(doc_id, pno):
     return json.dumps(spans)
 
 
+def get_web_font(doc_id, pno, font_name):
+    """The page's own embedded font, in a form a browser can render.
+
+    Used by the in-place editor so what you type on screen looks like what
+    the PDF already contains. TrueType and OpenType go straight to the
+    browser; anything else (bare CFF, Type1) comes back empty and the UI
+    falls back to a lookalike stack.
+    """
+    doc = _doc(doc_id)
+    page = doc[int(pno)]
+    for info in page.get_fonts(full=True):
+        xref, basefont = info[0], info[3]
+        if not _same_font(basefont, font_name):
+            continue
+        try:
+            _name, ext, _ftype, buf = doc.extract_font(xref)
+        except Exception:
+            continue
+        if buf and ext in ("ttf", "otf"):
+            return buf
+    return b""
+
+
 def edit_text(doc_id, pno, bbox, new_text, font_name="", size=0, color_int=0, flags=0):
     """Replace the text in one span, keeping the original look.
 
     The old glyphs are genuinely removed from the content stream (redaction),
     then the replacement is drawn with matched font, size and colour.
     """
-    page = _doc(doc_id)[int(pno)]
+    doc = _doc(doc_id)
+    page = doc[int(pno)]
     x0, y0, x1, y1 = [float(v) for v in bbox]
     rect = pymupdf.Rect(x0, y0, x1, y1)
+
+    # Grab the embedded font while the page still references it — redaction can
+    # drop the resource.
+    buf, _ = _grab_embedded_font(doc, page, font_name, new_text)
 
     # Erase the original glyphs without disturbing anything else on the page.
     page.add_redact_annot(rect)
     page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE)
 
     if not new_text:
-        return True
+        return json.dumps({"ok": True, "font": "", "exact": False})
 
-    font = _pick_font(font_name, int(flags))
+    font, measurer, exact = _register_font(page, buf, font_name, flags)
     size = float(size) or (rect.height * 0.8)
-    size = _fit_size(new_text, font, size, rect.width)
+    size = _fit_size(new_text, font, size, rect.width * 1.15, measurer)
     page.insert_text(
         (rect.x0, rect.y1 - size * 0.22),
         new_text,
@@ -248,7 +360,8 @@ def edit_text(doc_id, pno, bbox, new_text, font_name="", size=0, color_int=0, fl
         fontname=font,
         color=_int_to_rgb(int(color_int)),
     )
-    return True
+    return json.dumps({"ok": True, "font": font_name if exact else _pick_font(font_name, int(flags or 0)),
+                       "exact": exact, "size": round(size, 1)})
 
 
 def search_text(doc_id, needle):
@@ -1312,13 +1425,16 @@ def find_replace(doc_id, needle, replacement, pages_spec=""):
         if not hits:
             continue
 
-        # Capture styling before redaction destroys the spans.
+        # Capture styling — and the document's own font — before redaction
+        # destroys the spans that reference them.
         styled = []
         for rect in hits:
             span = _span_at(page, rect)
+            name = span["font"] if span else ""
+            flags = span["flags"] if span else 0
+            buf, _ = _grab_embedded_font(doc, page, name, replacement)
             styled.append((
-                rect,
-                _pick_font(span["font"] if span else "", span["flags"] if span else 0),
+                rect, name, flags, buf,
                 float(span["size"]) if span else rect.height * 0.8,
                 _int_to_rgb(int(span["color"])) if span else (0, 0, 0),
             ))
@@ -1326,10 +1442,11 @@ def find_replace(doc_id, needle, replacement, pages_spec=""):
 
         page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE)
 
-        for rect, font, size, colour in styled:
+        for rect, name, flags, buf, size, colour in styled:
             if replacement:
+                font, measurer, _exact = _register_font(page, buf, name, flags)
                 # Allow a little bleed past the old width; text rarely matches length.
-                size = _fit_size(replacement, font, size, rect.width * 1.8)
+                size = _fit_size(replacement, font, size, rect.width * 1.8, measurer)
                 page.insert_text((rect.x0, rect.y1 - size * 0.22), replacement,
                                  fontsize=size, fontname=font, color=colour)
             replaced += 1
@@ -1439,7 +1556,8 @@ def edit_block(doc_id, pno, bbox, new_text, font_name="", size=0, color_int=0,
     x0, y0, x1, y1 = [float(v) for v in bbox]
     rect = pymupdf.Rect(x0, y0, x1, y1)
 
-    font = _pick_font(font_name, int(flags))
+    # Same as edit_text: capture the document's own font before redaction.
+    buf, _ = _grab_embedded_font(doc, page, font_name, new_text)
     colour = _int_to_rgb(int(color_int))
     start_size = float(size) or 11.0
 
@@ -1447,7 +1565,9 @@ def edit_block(doc_id, pno, bbox, new_text, font_name="", size=0, color_int=0,
     page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE)
 
     if not new_text:
-        return json.dumps({"ok": True, "size": 0, "grew": False})
+        return json.dumps({"ok": True, "size": 0, "grew": False, "exact": False})
+
+    font, _measurer, exact = _register_font(page, buf, font_name, flags)
 
     # A paragraph may need more room than the original occupied. Try the box as
     # it is, then allow it to grow downward, and only then shrink the type.
@@ -1456,6 +1576,13 @@ def edit_block(doc_id, pno, bbox, new_text, font_name="", size=0, color_int=0,
     for attempt in range(3):
         probe = pymupdf.open()
         probe_page = probe.new_page(width=page.rect.width, height=page.rect.height)
+        # The reused font is registered on the real page only, so the throwaway
+        # measuring page needs its own copy or the probe measures the wrong face.
+        if exact and buf:
+            try:
+                probe_page.insert_font(fontname=font, fontbuffer=buf)
+            except Exception:
+                pass
         leftover = probe_page.insert_textbox(target, new_text, fontsize=start_size,
                                              fontname=font, align=0)
         probe.close()
@@ -1472,7 +1599,7 @@ def edit_block(doc_id, pno, bbox, new_text, font_name="", size=0, color_int=0,
 
     page.insert_textbox(target, new_text, fontsize=start_size, fontname=font,
                         color=colour, align=0)
-    return json.dumps({"ok": True, "size": round(start_size, 1), "grew": grew})
+    return json.dumps({"ok": True, "size": round(start_size, 1), "grew": grew, "exact": exact})
 
 
 def get_outline(doc_id):

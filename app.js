@@ -11,7 +11,7 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.5.0';
+const APP_VERSION = '4.6.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -157,6 +157,34 @@ function b64ToBytes(b64) {
     const out = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
     return out;
+}
+
+/** PDF colour integer (0xRRGGBB) as a CSS colour. */
+function intToCss(value) {
+    return `#${(Number(value) >>> 0 & 0xffffff).toString(16).padStart(6, '0')}`;
+}
+
+/* PyMuPDF span flags: 2 = italic, 4 = serifed, 8 = monospaced, 16 = bold. */
+const FLAG_ITALIC = 2, FLAG_SERIF = 4, FLAG_MONO = 8, FLAG_BOLD = 16;
+
+/** A widely installed stack that resembles a PDF font the browser cannot load.
+ *
+ * Used when a font is not embedded, or is embedded in a format (bare CFF,
+ * Type 1) that browsers refuse — the on-screen text still reads as the same
+ * kind of face as the page around it.
+ */
+function lookalikeFont(name, flags = 0) {
+    const n = String(name || '').split('+').pop().toLowerCase();
+    const bold = (flags & FLAG_BOLD) !== 0 || /bold|black|heavy|semibold|\bbd\b/.test(n);
+    const italic = (flags & FLAG_ITALIC) !== 0 || /italic|oblique/.test(n);
+    let family = '"Helvetica Neue", Helvetica, Arial, sans-serif';
+    if ((flags & FLAG_MONO) !== 0 || /mono|courier|consol|menlo/.test(n)) {
+        family = '"Courier New", Courier, monospace';
+    } else if (/times|serif|georgia|garamond|cambria|roman|minion|book(?!man old)/.test(n)
+               || ((flags & FLAG_SERIF) !== 0 && !/sans|arial|helvet|roboto|calibri/.test(n))) {
+        family = 'Georgia, "Times New Roman", Times, serif';
+    }
+    return { family, weight: bold ? '700' : '400', style: italic ? 'italic' : 'normal' };
 }
 
 async function fileToBytes(file) {
@@ -386,7 +414,8 @@ class DocView {
 const EditTool = {
     mode: 'TEXT',
     spans: [],
-    pending: null,
+    editing: null,
+    fontCache: new Map(),
 
     init() {
         this.view = new DocView('edit', { onRender: () => this.drawSpans() });
@@ -396,8 +425,8 @@ const EditTool = {
             this.mode = btn.dataset.editmode;
             $$('[data-editmode]').forEach((b) => b.classList.toggle('active', b === btn));
             $('edit-hint').textContent =
-                this.mode === 'TEXT' ? 'Click a highlighted line to edit it.'
-              : this.mode === 'BLOCK' ? 'Click a paragraph to rewrite it — the text will rewrap to fit.'
+                this.mode === 'TEXT' ? 'Tap a highlighted line and type — you edit straight on the page.'
+              : this.mode === 'BLOCK' ? 'Tap a paragraph and rewrite it in place — the text rewraps to fit.'
               : `Drag across the page to add a ${this.mode} annotation.`;
             this.drawSpans();
         }));
@@ -423,14 +452,12 @@ const EditTool = {
         $('edit-save').addEventListener('click', () => this.view.save('edited.pdf'));
         $('edit-search-btn').addEventListener('click', () => this.search());
         $('edit-search').addEventListener('keydown', (e) => { if (e.key === 'Enter') this.search(); });
-        $('text-modal-apply').addEventListener('click', () => this.applyEdit());
-        $$('[data-textclose]').forEach((el) => el.addEventListener('click', () => $('text-modal').classList.add('hidden')));
-
         this.setupDragAnnotate();
     },
 
     async open(file) {
         if (!file) return;
+        this.fontCache = new Map();   // fonts are extracted from the open document
         await UI.run('Opening document…', async () => {
             const info = await this.view.load(file);
             $('edit-doc-info').innerHTML =
@@ -456,49 +483,182 @@ const EditTool = {
             el.style.cssText = `left:${item.xFrac * 100}%;top:${item.yFrac * 100}%;` +
                                `width:${item.wFrac * 100}%;height:${item.hFrac * 100}%`;
             el.title = isBlock
-                ? `Paragraph · ${item.lines} line(s) — click to rewrite`
-                : `${item.font} ${item.size}pt — click to edit`;
-            el.addEventListener('click', () => this.promptEdit(index));
+                ? `Paragraph · ${item.lines} line(s) — tap to rewrite in place`
+                : `${item.font} ${item.size}pt — tap to edit in place`;
+            el.addEventListener('click', (e) => this.beginEdit(index, el, e));
             overlay.appendChild(el);
         });
     },
 
-    promptEdit(index) {
-        const item = this.spans[index];
-        this.pending = item;
-        this.pendingIsBlock = this.mode === 'BLOCK';
-        $('text-modal-meta').textContent = this.pendingIsBlock
-            ? `Paragraph · ${item.lines} line(s) · ${item.font} ${item.size}pt — text will rewrap`
-            : `${item.font} · ${item.size}pt`;
-        const input = $('text-modal-input');
-        input.value = item.text;
-        input.rows = this.pendingIsBlock ? 8 : 3;
-        $('text-modal').classList.remove('hidden');
-        input.focus();
+    /* ---- in-place text editing ---- */
+
+    /** The face to draw the editor in, matching the page as closely as possible.
+     *
+     * The document's own embedded font is used when the browser can render it,
+     * so the text you type on screen is the text you get in the PDF. Otherwise
+     * a lookalike stack stands in.
+     */
+    async fontFor(item) {
+        const key = `${item.font}|${item.flags}`;
+        if (this.fontCache.has(key)) return this.fontCache.get(key);
+
+        const look = lookalikeFont(item.font, item.flags);
+        let spec = { ...look, exact: false };
+        try {
+            const bytes = await engine.call('get_web_font', this.view.docId,
+                                            this.view.page, item.font || '');
+            if (bytes && bytes.length) {
+                const family = `MPDFface${this.fontCache.size}`;
+                const face = new FontFace(family, bytes);
+                await face.load();
+                document.fonts.add(face);
+                // An embedded face already carries its own weight and slant,
+                // so asking for synthetic bold/italic on top would double it.
+                spec = { family: `"${family}", ${look.family}`, weight: '400',
+                         style: 'normal', exact: true };
+            }
+        } catch (err) {
+            console.warn('Embedded font unavailable — using a lookalike', err);
+        }
+        this.fontCache.set(key, spec);
+        return spec;
     },
 
-    async applyEdit() {
-        const item = this.pending;
-        const isBlock = this.pendingIsBlock;
-        const next = $('text-modal-input').value;
-        $('text-modal').classList.add('hidden');
-        if (!item || next === item.text) return;
+    /** Open an editable box sitting exactly where the text is. */
+    async beginEdit(index, box, event) {
+        if (this.editing) this.commitEdit();
+        const item = this.spans[index];
+        const isBlock = this.mode === 'BLOCK';
+        const img = this.view.img;
+        const scale = img.clientWidth / this.view.info.sizes[this.view.page].width;
+        const spec = await this.fontFor(item);
+
+        const el = document.createElement('div');
+        el.className = isBlock ? 'inline-edit inline-edit--block' : 'inline-edit';
+        // plaintext-only keeps pasted markup out; older browsers get plain
+        // contenteditable plus the paste handler below.
+        try { el.contentEditable = 'plaintext-only'; } catch (err) { /* fall through */ }
+        if (el.contentEditable !== 'plaintext-only') el.contentEditable = 'true';
+        el.spellcheck = false;
+        el.textContent = item.text;
+
+        el.style.left = `${item.xFrac * 100}%`;
+        el.style.top = `${item.yFrac * 100}%`;
+        el.style.width = `${item.wFrac * 100}%`;
+        el.style.fontFamily = spec.family;
+        el.style.fontWeight = spec.weight;
+        el.style.fontStyle = spec.style;
+        el.style.fontSize = `${Math.max(item.size * scale, 7)}px`;
+        el.style.color = intToCss(item.colorInt);
+        const boxHeight = item.hFrac * img.clientHeight;
+        if (isBlock) {
+            el.style.minHeight = `${boxHeight}px`;
+            el.style.lineHeight = `${(boxHeight / Math.max(item.lines || 1, 1)).toFixed(2)}px`;
+        } else {
+            // One line: matching line-height to the box centres it on the original.
+            el.style.height = `${boxHeight}px`;
+            el.style.lineHeight = `${boxHeight}px`;
+        }
+
+        const tag = document.createElement('div');
+        tag.className = 'inline-edit__tag';
+        tag.style.left = `${item.xFrac * 100}%`;
+        tag.style.top = `${item.yFrac * 100}%`;
+        tag.textContent = `${item.font} · ${item.size}pt`
+            + (spec.exact ? '' : ' · lookalike')
+            + (isBlock ? ' — Ctrl+Enter to apply, Esc to cancel'
+                       : ' — Enter to apply, Esc to cancel');
+
+        el.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') { e.preventDefault(); this.cancelEdit(); return; }
+            if (e.key !== 'Enter') return;
+            // A paragraph can hold line breaks, so it commits deliberately.
+            if (isBlock && !(e.ctrlKey || e.metaKey)) return;
+            e.preventDefault();
+            this.commitEdit();
+        });
+        el.addEventListener('paste', (e) => {
+            e.preventDefault();
+            const text = (e.clipboardData || window.clipboardData).getData('text');
+            document.execCommand('insertText', false, text);
+        });
+        el.addEventListener('blur', () => this.commitEdit());
+
+        box.style.visibility = 'hidden';
+        this.editing = { item, isBlock, el, tag, box, done: false };
+        this.view.overlay.append(el, tag);
+
+        el.focus({ preventScroll: true });
+        this.placeCaret(el, event);
+        el.scrollIntoView({ block: 'center', inline: 'nearest' });
+    },
+
+    /** Put the caret where the page was tapped, rather than at the start. */
+    placeCaret(el, event) {
+        const sel = window.getSelection();
+        if (!sel) return;
+        let range = null;
+        if (event && document.caretRangeFromPoint) {
+            range = document.caretRangeFromPoint(event.clientX, event.clientY);
+        } else if (event && document.caretPositionFromPoint) {
+            const pos = document.caretPositionFromPoint(event.clientX, event.clientY);
+            if (pos) {
+                range = document.createRange();
+                range.setStart(pos.offsetNode, pos.offset);
+            }
+        }
+        if (!range || !el.contains(range.startContainer)) {
+            range = document.createRange();
+            range.selectNodeContents(el);
+        }
+        range.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(range);
+    },
+
+    cancelEdit() {
+        if (!this.editing) return;
+        this.editing.done = true;
+        this.closeEditor();
+    },
+
+    closeEditor() {
+        const ctx = this.editing;
+        this.editing = null;
+        if (!ctx) return;
+        ctx.el.remove();
+        ctx.tag.remove();
+        if (ctx.box) ctx.box.style.visibility = '';
+    },
+
+    /** Write what was typed back into the PDF itself. */
+    async commitEdit() {
+        const ctx = this.editing;
+        if (!ctx || ctx.done) return;
+        ctx.done = true;
+
+        const raw = ctx.el.innerText.replace(/\u00a0/g, ' ').replace(/\s+$/, '');
+        // A span is a single line, so anything typed across lines is joined.
+        const next = ctx.isBlock ? raw : raw.replace(/\s*\n\s*/g, ' ');
+        const item = ctx.item;
+        const isBlock = ctx.isBlock;
+        this.closeEditor();
+        if (!next || next === item.text) return;
 
         await UI.run(isBlock ? 'Rewriting paragraph…' : 'Replacing text…', async () => {
-            if (isBlock) {
-                const res = await engine.callJSON('edit_block', this.view.docId, this.view.page,
-                                                  item.bbox, next, item.font, item.size,
-                                                  item.colorInt, item.flags, true);
-                await this.view.render();
-                UI.toast(res.grew
-                    ? `Paragraph rewritten at ${res.size}pt — the box grew to fit`
-                    : `Paragraph rewritten and rewrapped at ${res.size}pt`, 'success');
-            } else {
-                await engine.call('edit_text', this.view.docId, this.view.page, item.bbox,
-                                  next, item.font, item.size, item.colorInt, item.flags);
-                await this.view.render();
-                UI.toast('Text replaced in the PDF content stream', 'success');
-            }
+            const res = await engine.callJSON(isBlock ? 'edit_block' : 'edit_text',
+                                              this.view.docId, this.view.page, item.bbox,
+                                              next, item.font, item.size,
+                                              item.colorInt, item.flags,
+                                              ...(isBlock ? [true] : []));
+            await this.view.render();
+            const face = res.exact
+                ? `kept ${item.font}`
+                : 'matched with a similar font';
+            UI.toast(isBlock
+                ? (res.grew ? `Paragraph rewritten at ${res.size}pt, box grew to fit — ${face}`
+                            : `Paragraph rewrapped at ${res.size}pt — ${face}`)
+                : `Text replaced — ${face}`, 'success');
         });
     },
 
