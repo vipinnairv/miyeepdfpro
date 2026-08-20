@@ -1504,6 +1504,52 @@ body {
   background: rgba(var(--color-teal-500-rgb), 0.20);
 }
 
+/* In-place text editing.
+   The editable box sits exactly where the text is, in the page's own font at
+   the page's own size, so what you type looks like what you will get. The
+   opaque background hides the original glyphs still visible in the page image. */
+.inline-edit {
+  position: absolute;
+  z-index: 5;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: #fff;
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+  border-radius: 2px;
+  white-space: pre;
+  overflow-wrap: normal;
+  cursor: text;
+  caret-color: var(--color-primary);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.18);
+}
+
+/* A paragraph wraps and may outgrow the box it started in. */
+.inline-edit--block {
+  white-space: pre-wrap;
+  height: auto;
+  overflow-wrap: break-word;
+}
+
+.inline-edit__tag {
+  position: absolute;
+  z-index: 6;
+  transform: translateY(calc(-100% - 4px));
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--color-primary);
+  color: var(--color-btn-primary-text);
+  font-family: var(--font-family-base);
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: nowrap;
+  pointer-events: none;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Outline editor */
 .outline-list { margin-bottom: var(--space-12); }
 
