@@ -577,6 +577,16 @@ body {
   letter-spacing: 0.02em;
 }
 
+.header__logo {
+  width: 34px;
+  height: 34px;
+  display: block;
+  /* Nudge down so the mark sits on the wordmark's optical centre, not its
+     baseline — the title's flex uses `align-items: baseline`. */
+  align-self: center;
+  flex: none;
+}
+
 .header__right {
   display: flex;
   align-items: center;
