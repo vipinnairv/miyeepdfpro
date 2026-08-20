@@ -270,21 +270,23 @@ def search_text(doc_id, needle):
 # redaction
 # --------------------------------------------------------------------------
 
-def redact(doc_id, marks_json, remove_images=False):
+def redact(doc_id, marks_json, remove_images=False, fill="#000000"):
     """Permanently remove content under each mark.
 
     Unlike drawing a black box, the underlying text and image data are struck
-    from the file, so the result cannot be recovered by copy/paste.
+    from the file, so the result cannot be recovered by copy/paste. `fill` only
+    changes the colour of the box left behind — never what gets removed.
     """
     doc = _doc(doc_id)
     marks = json.loads(marks_json) if isinstance(marks_json, str) else marks_json
+    colour = _hex_to_rgb(fill)
     touched = set()
     for mark in marks:
         page = doc[int(mark["page"])]
         rect = _rect_from_fracs(page, float(mark["xFrac"]), float(mark["yFrac"]),
                                 float(mark["xFrac"]) + float(mark["wFrac"]),
                                 float(mark["yFrac"]) + float(mark["hFrac"]))
-        page.add_redact_annot(rect, fill=(0, 0, 0))
+        page.add_redact_annot(rect, fill=colour)
         touched.add(int(mark["page"]))
 
     mode = pymupdf.PDF_REDACT_IMAGE_REMOVE if remove_images else pymupdf.PDF_REDACT_IMAGE_NONE
@@ -293,15 +295,16 @@ def redact(doc_id, marks_json, remove_images=False):
     return len(touched)
 
 
-def redact_search(doc_id, needle, pages_spec=""):
+def redact_search(doc_id, needle, pages_spec="", fill="#000000"):
     """Find every occurrence of a phrase and redact it (Acrobat's find-and-redact)."""
     doc = _doc(doc_id)
+    colour = _hex_to_rgb(fill)
     count = 0
     for pno in _page_indices(doc, pages_spec):
         page = doc[pno]
         found = page.search_for(needle)
         for rect in found:
-            page.add_redact_annot(rect, fill=(0, 0, 0))
+            page.add_redact_annot(rect, fill=colour)
         if found:
             page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE)
             count += len(found)

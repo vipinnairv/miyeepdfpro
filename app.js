@@ -1,17 +1,17 @@
-/* Advanced PDF Suite v4 — UI layer.
+/* MiyeePDF — UI layer.
  *
- * All PDF work happens in pdf_engine.py (PyMuPDF) running under Pyodide, so
- * this file only handles chrome: loading files, drawing pages, collecting
- * options and shuttling them across the Python bridge.
+ * All PDF work happens in pdf_engine.py, so this file only handles chrome:
+ * loading files, drawing pages, collecting options and shuttling them across
+ * the engine bridge.
  */
 
 /* ------------------------------------------------------------------ */
-/* Python engine bridge                                                */
+/* engine bridge                                                       */
 /* ------------------------------------------------------------------ */
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.0.1';
+const APP_VERSION = '4.1.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -25,7 +25,7 @@ class PyEngine {
         this._promise = null;
     }
 
-    /** Boot Pyodide + PyMuPDF. Safe to await from anywhere; only runs once. */
+    /** Boot the engine. Safe to await from anywhere; only runs once. */
     boot(onStep) {
         if (!this._promise) this._promise = this._boot(onStep);
         return this._promise;
@@ -33,13 +33,13 @@ class PyEngine {
 
     async _boot(onStep = () => {}) {
         try {
-            onStep('Downloading Python runtime…', 10);
+            onStep('Setting up your workspace…', 10);
             this.pyodide = await loadPyodide({ indexURL: PYODIDE_INDEX });
 
-            onStep('Loading PyMuPDF (17 MB)…', 45);
+            onStep('Loading PDF tools…', 45);
             await this.pyodide.loadPackage(PYMUPDF_WHEEL);
 
-            onStep('Starting PDF engine…', 85);
+            onStep('Almost ready…', 85);
             const source = await (await fetch(`pdf_engine.py?v=${APP_VERSION}`)).text();
             this.pyodide.FS.writeFile('/pdf_engine.py', source);
             this.pyodide.runPython('import sys\nif "/" not in sys.path: sys.path.insert(0, "/")');
@@ -50,12 +50,12 @@ class PyEngine {
             return this;
         } catch (err) {
             this.error = err;
-            console.error('Python engine failed to start:', err);
+            console.error('Engine failed to start:', err);
             throw err;
         }
     }
 
-    /** Call a function in pdf_engine.py. Python exceptions surface as JS errors. */
+    /** Call a function in pdf_engine.py. Engine exceptions surface as JS errors. */
     async call(fn, ...args) {
         if (!this.ready) await this.boot();
         const target = this.module[fn];
@@ -201,14 +201,14 @@ const UI = {
             });
             $('engine-loading').classList.add('hidden');
             badge.className = 'engine-badge engine-badge--ready';
-            badgeText.textContent = 'Python engine ready';
+            badgeText.textContent = 'Ready';
             Tools.forEach((t) => t.init && t.init());
         } catch (err) {
-            step.textContent = `Could not start the Python engine: ${err.message}`;
+            step.textContent = 'Could not finish setting up. Please check your connection and reload the page.';
             fill.style.width = '100%';
             fill.style.background = 'var(--color-error)';
             badge.className = 'engine-badge engine-badge--error';
-            badgeText.textContent = 'Engine failed';
+            badgeText.textContent = 'Setup failed';
         }
     },
 
@@ -1167,6 +1167,8 @@ const RedactTool = {
         });
         $('redact-search').addEventListener('click', () => this.findAndRedact());
         $('redact-apply').addEventListener('click', () => this.apply());
+        // Repaint existing marks so the preview matches the chosen colour.
+        $('redact-color').addEventListener('input', () => this.drawMarks());
         this.setupDraw();
     },
 
@@ -1214,12 +1216,14 @@ const RedactTool = {
 
     drawMarks() {
         const overlay = this.view.overlay;
+        const colour = $('redact-color').value;
         overlay.innerHTML = '';
         this.marks.filter((m) => m.page === this.view.page).forEach((m) => {
             const el = document.createElement('div');
             el.className = 'redact-box';
             el.style.cssText = `left:${m.xFrac * 100}%;top:${m.yFrac * 100}%;` +
-                               `width:${m.wFrac * 100}%;height:${m.hFrac * 100}%`;
+                               `width:${m.wFrac * 100}%;height:${m.hFrac * 100}%;` +
+                               `background:${colour}`;
             overlay.appendChild(el);
         });
         $('redact-count').textContent = this.marks.length
@@ -1230,7 +1234,7 @@ const RedactTool = {
         const term = $('redact-term').value.trim();
         if (!term) return UI.toast('Enter text to redact', 'error');
         await UI.run('Finding and redacting…', async () => {
-            const n = await engine.call('redact_search', 'redact', term);
+            const n = await engine.call('redact_search', 'redact', term, '', $('redact-color').value);
             if (n) this.applied += n;
             await this.view.render();
             UI.toast(n ? `Redacted ${n} occurrence(s) — content deleted from the file` : 'No matches found',
@@ -1246,7 +1250,8 @@ const RedactTool = {
         }
         await UI.run('Applying redactions…', async () => {
             if (this.marks.length) {
-                await engine.call('redact', 'redact', JSON.stringify(this.marks), $('redact-images').checked);
+                await engine.call('redact', 'redact', JSON.stringify(this.marks),
+                              $('redact-images').checked, $('redact-color').value);
                 this.marks = [];
             }
             this.applied = 0;
