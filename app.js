@@ -11,7 +11,7 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.3.0';
+const APP_VERSION = '4.5.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -23,23 +23,61 @@ class PyEngine {
         this.ready = false;
         this.error = null;
         this._promise = null;
+        this.onStep = null;
+        this.lastMessage = 'Getting things ready…';
+        this.lastPct = 0;
     }
 
-    /** Boot the engine. Safe to await from anywhere; only runs once. */
-    boot(onStep) {
-        if (!this._promise) this._promise = this._boot(onStep);
+    /** Boot the engine. Safe to await from anywhere; only runs once.
+     *
+     * Progress is reported through `onStep`, which can be attached after boot
+     * has already started — that lets the download begin the moment this file
+     * parses, rather than waiting for DOMContentLoaded and the UI wiring.
+     */
+    boot() {
+        if (!this._promise) this._promise = this._boot((msg, pct) => this._report(msg, pct));
         return this._promise;
+    }
+
+    _report(message, pct) {
+        this.lastMessage = message;
+        this.lastPct = pct;
+        if (this.onStep) this.onStep(message, pct);
+    }
+
+    /** Approximate the wheel download for the progress bar.
+     *
+     * loadPackage() owns the actual fetch — it is the only thing that reliably
+     * installs the package, and prefetching separately made the browser
+     * download all 17 MB twice (loadPackage treats a path as a URL, so it
+     * cannot be handed bytes, and HTTP-cache dedupe is not dependable). So the
+     * bar is advanced on a timer sized to the payload instead, and snaps to
+     * completion when the install actually returns.
+     */
+    _fakeProgress(from, to, expectedMs, onStep, label) {
+        const started = Date.now();
+        const timer = setInterval(() => {
+            const frac = Math.min(0.97, (Date.now() - started) / expectedMs);
+            onStep(label, from + (to - from) * frac);
+        }, 250);
+        return () => clearInterval(timer);
     }
 
     async _boot(onStep = () => {}) {
         try {
-            onStep('Setting up your workspace…', 10);
+            // Kick the wheel download off immediately, then init Pyodide while
+            // it streams in. These used to run one after the other.
+            onStep('Setting up your workspace…', 5);
+            let stop = this._fakeProgress(5, 45, 12000, onStep, 'Setting up your workspace…');
             this.pyodide = await loadPyodide({ indexURL: PYODIDE_INDEX });
+            stop();
 
-            onStep('Loading PDF tools…', 45);
+            onStep('Downloading PDF tools (17 MB)…', 45);
+            stop = this._fakeProgress(45, 88, 20000, onStep, 'Downloading PDF tools (17 MB)…');
             await this.pyodide.loadPackage(PYMUPDF_WHEEL);
+            stop();
 
-            onStep('Almost ready…', 85);
+            onStep('Almost ready…', 90);
             const source = await (await fetch(`pdf_engine.py?v=${APP_VERSION}`)).text();
             this.pyodide.FS.writeFile('/pdf_engine.py', source);
             this.pyodide.runPython('import sys\nif "/" not in sys.path: sys.path.insert(0, "/")');
@@ -137,6 +175,10 @@ const UI = {
         this.setupTabs();
         this.setupTheme();
         this.setupPickers();
+        // Wire every tool straight away. These only attach listeners and render
+        // markup, so the app is fully browsable while the engine downloads —
+        // waiting for it here is what made the page look frozen on first visit.
+        Tools.forEach((t) => { if (t.init) t.init(); });
         this.bootEngine();
     },
 
@@ -192,23 +234,36 @@ const UI = {
         });
     },
 
+    /** Latest boot message, so a tool waiting on the engine can show progress. */
+    bootMessage: 'Getting things ready…',
+
     async bootEngine() {
         const step = $('engine-loading-step');
         const fill = $('engine-progress-fill');
         const badge = $('engine-badge');
         const badgeText = $('engine-badge-text');
 
+        const paint = (message, pct) => {
+            this.bootMessage = message;
+            step.textContent = message;
+            fill.style.width = `${pct}%`;
+            badgeText.textContent = message.length > 34 ? `${Math.round(pct)}%` : message;
+            // Keep a waiting operation's spinner in step with the download.
+            if (!$('status-container').classList.contains('hidden')) {
+                $('status-text').textContent = message;
+            }
+        };
+
         try {
-            await engine.boot((message, pct) => {
-                step.textContent = message;
-                fill.style.width = `${pct}%`;
-                badgeText.textContent = message;
-            });
+            // Boot already began at parse time; attach to it and catch up.
+            engine.onStep = paint;
+            paint(engine.lastMessage, engine.lastPct);
+            await engine.boot();
             $('engine-loading').classList.add('hidden');
             badge.className = 'engine-badge engine-badge--ready';
             badgeText.textContent = 'Ready';
-            Tools.forEach((t) => t.init && t.init());
         } catch (err) {
+            this.bootMessage = 'Setup failed';
             step.textContent = 'Could not finish setting up. Please check your connection and reload the page.';
             fill.style.width = '100%';
             fill.style.background = 'var(--color-error)';
@@ -238,7 +293,9 @@ const UI = {
 
     /** Run an async job with a spinner and uniform error reporting. */
     async run(message, job) {
-        this.busy(message);
+        // On first use the engine may still be arriving; say so rather than
+        // showing a task message that looks stuck.
+        this.busy(engine.ready ? message : this.bootMessage);
         try {
             return await job();
         } catch (err) {
@@ -1799,6 +1856,11 @@ const Dashboard = {
 const Tools = [EditTool, PagesTool, SignTool, StampTool, OcrTool,
                CompressTool, ProtectTool, RedactTool, ExportTool, CompareTool,
                ScanTool, InspectTool, ReplaceTool, AutoSplitTool, Dashboard];
+
+// Start fetching the engine immediately — this file is loaded at the end of
+// <body>, so the download overlaps with DOM construction instead of queueing
+// behind it. Errors are handled when the UI attaches its progress display.
+engine.boot().catch(() => {});
 
 document.addEventListener('DOMContentLoaded', () => UI.init());
 window.PDFSuite = { engine, UI, Tools, TOOL_CARDS };

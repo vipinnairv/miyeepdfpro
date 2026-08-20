@@ -7,16 +7,20 @@
     <meta name="description" content="Edit, sign, redact, protect and convert PDFs entirely on your own device. Nothing is ever uploaded.">
     <meta name="theme-color" content="#21808d">
 
+    <!-- Warm the CDN connection before the 12 MB of engine assets are requested. -->
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <link rel="dns-prefetch" href="https://cdn.jsdelivr.net">
+
     <!-- SVG first for modern browsers; .ico covers older ones and the
          automatic /favicon.ico request. -->
-    <link rel="icon" href="favicon.svg?v=4.3.0" type="image/svg+xml">
-    <link rel="icon" href="favicon.ico?v=4.3.0" sizes="16x16 32x32 48x48">
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.3.0">
-    <link rel="manifest" href="site.webmanifest?v=4.3.0">
+    <link rel="icon" href="favicon.svg?v=4.5.0" type="image/svg+xml">
+    <link rel="icon" href="favicon.ico?v=4.5.0" sizes="16x16 32x32 48x48">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.5.0">
+    <link rel="manifest" href="site.webmanifest?v=4.5.0">
 
     <!-- ?v= busts the browser cache on redeploy: without it a stale app.js/style.css
          pair silently breaks the page. Bump APP_VERSION in app.js to match. -->
-    <link rel="stylesheet" href="style.css?v=4.3.0">
+    <link rel="stylesheet" href="style.css?v=4.5.0">
     <script src="https://cdn.jsdelivr.net/pyodide/v314.0.5/full/pyodide.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
@@ -25,7 +29,7 @@
     <header class="header">
         <div class="header__content">
             <h1 class="header__title">
-                <img class="header__logo" src="logo.svg?v=4.3.0" alt="" width="34" height="34">
+                <img class="header__logo" src="logo.svg?v=4.5.0" alt="" width="34" height="34">
                 MiyeePDF <span class="header__byline">Built by Vipin Nair</span>
             </h1>
             <div class="header__right">
@@ -67,17 +71,20 @@
             <div class="dashboard" id="dashboard"></div>
         </div>
 
-        <!-- Engine boot progress -->
-        <div id="engine-loading" class="engine-loading">
-            <div class="engine-loading__inner">
-                <div class="loading-spinner"></div>
-                <h3>Preparing your workspace</h3>
-                <p id="engine-loading-step">Getting things ready…</p>
-                <div class="progress-bar"><div class="progress-fill" id="engine-progress-fill"></div></div>
-                <p class="engine-loading__note">
-                    Everything runs entirely on your device — your files are never uploaded.
-                    First visit takes a moment to set up; after that it starts instantly.
-                </p>
+        <!-- Boot progress. Deliberately a slim banner rather than an overlay:
+             the whole app is usable while this runs, and only an actual PDF
+             operation has to wait for it. -->
+        <div id="engine-loading" class="engine-banner">
+            <div class="engine-banner__row">
+                <div class="engine-banner__spinner"></div>
+                <div class="engine-banner__text">
+                    <strong>Setting up — you can browse while this finishes.</strong>
+                    <span id="engine-loading-step">Getting things ready…</span>
+                </div>
+                <span class="engine-banner__note">One-time download, then cached. Files never leave your device.</span>
+            </div>
+            <div class="progress-bar engine-banner__bar">
+                <div class="progress-fill" id="engine-progress-fill"></div>
             </div>
         </div>
 
@@ -845,6 +852,6 @@
         </div>
     </footer>
 
-    <script src="app.js?v=4.3.0"></script>
+    <script src="app.js?v=4.5.0"></script>
 </body>
 </html>
