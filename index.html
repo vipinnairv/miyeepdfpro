@@ -9,14 +9,14 @@
 
     <!-- SVG first for modern browsers; .ico covers older ones and the
          automatic /favicon.ico request. -->
-    <link rel="icon" href="favicon.svg?v=4.2.0" type="image/svg+xml">
-    <link rel="icon" href="favicon.ico?v=4.2.0" sizes="16x16 32x32 48x48">
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.2.0">
-    <link rel="manifest" href="site.webmanifest?v=4.2.0">
+    <link rel="icon" href="favicon.svg?v=4.3.0" type="image/svg+xml">
+    <link rel="icon" href="favicon.ico?v=4.3.0" sizes="16x16 32x32 48x48">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.3.0">
+    <link rel="manifest" href="site.webmanifest?v=4.3.0">
 
     <!-- ?v= busts the browser cache on redeploy: without it a stale app.js/style.css
          pair silently breaks the page. Bump APP_VERSION in app.js to match. -->
-    <link rel="stylesheet" href="style.css?v=4.2.0">
+    <link rel="stylesheet" href="style.css?v=4.3.0">
     <script src="https://cdn.jsdelivr.net/pyodide/v314.0.5/full/pyodide.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
@@ -25,7 +25,7 @@
     <header class="header">
         <div class="header__content">
             <h1 class="header__title">
-                <img class="header__logo" src="logo.svg?v=4.2.0" alt="" width="34" height="34">
+                <img class="header__logo" src="logo.svg?v=4.3.0" alt="" width="34" height="34">
                 MiyeePDF <span class="header__byline">Built by Vipin Nair</span>
             </h1>
             <div class="header__right">
@@ -39,7 +39,8 @@
 
     <div class="main-container" id="main-container">
         <nav class="tab-nav">
-            <button class="tab-btn active" data-tab="edit">📝 Edit Text</button>
+            <button class="tab-btn active" data-tab="home">🏠 Home</button>
+            <button class="tab-btn" data-tab="edit">📝 Edit Text</button>
             <button class="tab-btn" data-tab="pages">📚 Pages</button>
             <button class="tab-btn" data-tab="sign">🖊️ Fill &amp; Sign</button>
             <button class="tab-btn" data-tab="stamp">💧 Watermark</button>
@@ -47,9 +48,24 @@
             <button class="tab-btn" data-tab="compress">🗜️ Compress</button>
             <button class="tab-btn" data-tab="protect">🔒 Protect</button>
             <button class="tab-btn" data-tab="redact">⬛ Redact</button>
+            <button class="tab-btn" data-tab="scan">🛡️ Find Sensitive Data</button>
+            <button class="tab-btn" data-tab="inspect">🕵️ Inspect</button>
+            <button class="tab-btn" data-tab="replace">🔁 Find &amp; Replace</button>
+            <button class="tab-btn" data-tab="autosplit">✂️ Auto-Split</button>
             <button class="tab-btn" data-tab="export">📤 Export</button>
             <button class="tab-btn" data-tab="compare">⚖️ Compare</button>
         </nav>
+
+        <!-- ============================== HOME =============================== -->
+        <div class="tab-content active" id="home-tab">
+            <div class="hero">
+                <h2>Everything you can do with MiyeePDF</h2>
+                <p>Fifteen tools, all running on your own device. Pick one to begin.</p>
+            </div>
+            <!-- Cards are generated from a single manifest in app.js so this
+                 dashboard can never drift out of step with the tabs. -->
+            <div class="dashboard" id="dashboard"></div>
+        </div>
 
         <!-- Engine boot progress -->
         <div id="engine-loading" class="engine-loading">
@@ -77,7 +93,7 @@
         </div>
 
         <!-- ============================ EDIT TEXT ============================ -->
-        <div class="tab-content active" id="edit-tab">
+        <div class="tab-content" id="edit-tab">
             <div class="tool-header">
                 <h2>Edit Text &amp; Annotate</h2>
                 <p>Click any text to edit it for real — the original glyphs are replaced in the PDF, not covered up</p>
@@ -97,7 +113,8 @@
                             <button class="btn btn--sm" data-nav="edit" data-dir="1">▶</button>
                         </div>
                         <div class="tool-group">
-                            <button class="mode-btn active" data-editmode="TEXT">✏️ Edit Text</button>
+                            <button class="mode-btn active" data-editmode="TEXT">✏️ Line</button>
+                            <button class="mode-btn" data-editmode="BLOCK">¶ Paragraph</button>
                             <button class="mode-btn" data-editmode="highlight">🖍️ Highlight</button>
                             <button class="mode-btn" data-editmode="underline">U̲ Underline</button>
                             <button class="mode-btn" data-editmode="strikeout">S̶ Strikeout</button>
@@ -125,6 +142,27 @@
                             <div id="edit-search-results" class="search-results"></div>
                         </div>
                         <div id="edit-annot-list" class="annot-list"></div>
+
+                        <hr class="divider">
+                        <h4 class="side-subtitle">Bookmarks</h4>
+                        <p class="hint hint--inline">The outline readers show in their sidebar.</p>
+                        <div id="edit-outline" class="outline-list"></div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Title</label>
+                                <input type="text" id="outline-title" class="form-control" placeholder="Section name">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Page</label>
+                                <input type="number" id="outline-page" class="form-control" value="1" min="1">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Level</label>
+                                <input type="number" id="outline-level" class="form-control" value="1" min="1" max="4">
+                            </div>
+                        </div>
+                        <button class="btn btn--sm btn--full-width" id="outline-add">＋ Add bookmark</button>
+                        <button class="btn btn--sm btn--full-width" id="outline-apply">Apply outline</button>
                     </div>
                     <div class="side-footer">
                         <button class="btn btn--primary btn--full-width" id="edit-save">💾 Save PDF</button>
@@ -530,6 +568,141 @@
             </div>
         </div>
 
+        <!-- ====================== FIND SENSITIVE DATA ====================== -->
+        <div class="tab-content" id="scan-tab">
+            <div class="tool-header">
+                <h2>Find Sensitive Data</h2>
+                <p>Scans the whole document for identifiers people forget are in there — then removes the ones you choose, permanently</p>
+            </div>
+            <div class="file-drop-zone" data-drop="scan">
+                <p>Drop a PDF here or click to select</p>
+                <input type="file" id="scan-file" accept=".pdf" hidden>
+                <button class="btn btn--primary" data-pick="scan-file">Select PDF</button>
+            </div>
+            <div class="panel hidden" id="scan-workspace">
+                <div id="scan-summary" class="summary-box"></div>
+                <div class="form-group">
+                    <label class="form-label">Look for</label>
+                    <div class="checkbox-grid" id="scan-kinds">
+                        <label class="checkbox-row"><input type="checkbox" value="PAN" checked> PAN</label>
+                        <label class="checkbox-row"><input type="checkbox" value="GSTIN" checked> GSTIN</label>
+                        <label class="checkbox-row"><input type="checkbox" value="Aadhaar" checked> Aadhaar</label>
+                        <label class="checkbox-row"><input type="checkbox" value="IFSC" checked> IFSC</label>
+                        <label class="checkbox-row"><input type="checkbox" value="Card" checked> Card numbers</label>
+                        <label class="checkbox-row"><input type="checkbox" value="Account" checked> Account numbers</label>
+                        <label class="checkbox-row"><input type="checkbox" value="Email" checked> Email</label>
+                        <label class="checkbox-row"><input type="checkbox" value="Phone" checked> Phone</label>
+                        <label class="checkbox-row"><input type="checkbox" value="IPAddr"> IP address</label>
+                    </div>
+                </div>
+                <p class="hint hint--inline">Card and Aadhaar numbers are checksum-verified, so ordinary figures are not flagged.</p>
+                <div class="action-buttons">
+                    <button class="btn btn--primary" id="scan-run">🛡️ Scan document</button>
+                </div>
+                <div id="scan-results" class="scan-results"></div>
+                <div class="action-buttons hidden" id="scan-actions">
+                    <label class="tool-option">Box colour <input type="color" id="scan-color" value="#000000"></label>
+                    <button class="btn btn--outline" id="scan-select-all">Select all</button>
+                    <button class="btn btn--primary" id="scan-redact">⬛ Redact selected &amp; save</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ============================= INSPECT ============================ -->
+        <div class="tab-content" id="inspect-tab">
+            <div class="tool-header">
+                <h2>Inspect &amp; Sanitize</h2>
+                <p>Shows what travels with a PDF beyond its visible pages — author names, attachments, scripts, hidden layers — then strips it</p>
+            </div>
+            <div class="file-drop-zone" data-drop="inspect">
+                <p>Drop a PDF here or click to select</p>
+                <input type="file" id="inspect-file" accept=".pdf" hidden>
+                <button class="btn btn--primary" data-pick="inspect-file">Select PDF</button>
+            </div>
+            <div class="panel hidden" id="inspect-workspace">
+                <div id="inspect-counts" class="summary-box"></div>
+                <div id="inspect-findings" class="findings"></div>
+                <h4 class="side-subtitle">Remove before sharing</h4>
+                <div class="checkbox-grid">
+                    <label class="checkbox-row"><input type="checkbox" id="san-metadata" checked> Metadata &amp; XMP</label>
+                    <label class="checkbox-row"><input type="checkbox" id="san-attach" checked> Embedded files</label>
+                    <label class="checkbox-row"><input type="checkbox" id="san-js" checked> JavaScript</label>
+                    <label class="checkbox-row"><input type="checkbox" id="san-annots" checked> Annotation responses</label>
+                    <label class="checkbox-row"><input type="checkbox" id="san-links"> Links</label>
+                    <label class="checkbox-row"><input type="checkbox" id="san-forms"> Reset form fields</label>
+                    <label class="checkbox-row"><input type="checkbox" id="san-hidden" checked> Hidden text</label>
+                </div>
+                <div class="action-buttons">
+                    <button class="btn btn--primary" id="inspect-clean">🧹 Sanitize &amp; save</button>
+                </div>
+                <div id="inspect-result" class="result-box hidden"></div>
+            </div>
+        </div>
+
+        <!-- ========================= FIND & REPLACE ========================= -->
+        <div class="tab-content" id="replace-tab">
+            <div class="tool-header">
+                <h2>Find &amp; Replace</h2>
+                <p>Real search-and-replace inside a PDF — each replacement takes on the font, size and colour of the text it replaces</p>
+            </div>
+            <div class="file-drop-zone" data-drop="replace">
+                <p>Drop a PDF here or click to select</p>
+                <input type="file" id="replace-file" accept=".pdf" hidden>
+                <button class="btn btn--primary" data-pick="replace-file">Select PDF</button>
+            </div>
+            <div class="panel hidden" id="replace-workspace">
+                <div id="replace-summary" class="summary-box"></div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Find</label>
+                        <input type="text" id="replace-find" class="form-control" placeholder="Text to find">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Replace with</label>
+                        <input type="text" id="replace-with" class="form-control" placeholder="New text (blank deletes)">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Pages (blank = all)</label>
+                    <input type="text" id="replace-pages" class="form-control" placeholder="1-3, 5">
+                </div>
+                <div class="action-buttons">
+                    <button class="btn btn--outline" id="replace-preview">🔍 Preview matches</button>
+                    <button class="btn btn--primary" id="replace-run">🔁 Replace all &amp; save</button>
+                </div>
+                <div id="replace-result" class="result-box hidden"></div>
+            </div>
+        </div>
+
+        <!-- =========================== AUTO-SPLIT ========================== -->
+        <div class="tab-content" id="autosplit-tab">
+            <div class="tool-header">
+                <h2>Auto-Split by Content</h2>
+                <p>Cuts a combined bundle wherever a marker appears — each invoice or statement becomes its own file, named from the text itself</p>
+            </div>
+            <div class="file-drop-zone" data-drop="autosplit">
+                <p>Drop a combined PDF here or click to select</p>
+                <input type="file" id="autosplit-file" accept=".pdf" hidden>
+                <button class="btn btn--primary" data-pick="autosplit-file">Select PDF</button>
+            </div>
+            <div class="panel hidden" id="autosplit-workspace">
+                <div id="autosplit-summary" class="summary-box"></div>
+                <div class="form-group">
+                    <label class="form-label">Start a new file on every page containing</label>
+                    <input type="text" id="autosplit-pattern" class="form-control" placeholder="e.g. Invoice No">
+                </div>
+                <div class="checkbox-grid">
+                    <label class="checkbox-row"><input type="checkbox" id="autosplit-regex"> Treat as a regular expression</label>
+                    <label class="checkbox-row"><input type="checkbox" id="autosplit-name" checked> Name each file from the matched text</label>
+                </div>
+                <div class="action-buttons">
+                    <button class="btn btn--outline" id="autosplit-preview">👁️ Preview the split</button>
+                    <button class="btn btn--primary" id="autosplit-run" disabled>✂️ Split &amp; download ZIP</button>
+                </div>
+                <div id="autosplit-result" class="split-preview"></div>
+            </div>
+        </div>
+
         <!-- ============================== EXPORT =========================== -->
         <div class="tab-content" id="export-tab">
             <div class="tool-header">
@@ -667,11 +840,11 @@
 
     <footer class="footer">
         <div class="footer__content">
-            <p>&copy; 2026 MiyeePDF Built by Vipin Nair | Your files are saved in your devices & Not shared (DPDP Act Compliant) |
+            <p>&copy; 2026 MiyeePDF Built by Vipin Nair | Your files are saved in your devices &amp; Not shared (DPDP Act Compliant) |
                <a href="mailto:audit.vipin@gmail.com">audit.vipin@gmail.com</a></p>
         </div>
     </footer>
 
-    <script src="app.js?v=4.2.0"></script>
+    <script src="app.js?v=4.3.0"></script>
 </body>
 </html>

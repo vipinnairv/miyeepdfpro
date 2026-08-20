@@ -8,16 +8,30 @@ An Acrobat-class PDF suite that runs **entirely in your browser**. No file is ev
 
 ## Features
 
-- **Edit Text** — click any text block and genuinely rewrite it; font, size and colour are detected and matched. Plus real PDF annotations (highlight, underline, strikeout, sticky notes, callouts).
-- **Pages** — merge, split, reorder by drag-and-drop, rotate and delete.
+Fifteen tools, reachable from a dashboard on the home screen.
+
+**Edit**
+- **Edit Text** — rewrite text for real, either a single line or a whole paragraph that rewraps to fit. Font, size and colour are detected and matched. Plus real PDF annotations and a bookmarks/outline editor.
 - **Fill & Sign** — draw, type or upload a signature; place initials, text, dates and check marks; fill and flatten form fields.
-- **Watermark & Stamps** — text watermarks (tiled or centred, rotated, transparent), approval stamps, page numbers, headers/footers, and legal **Bates numbering**.
-- **OCR** — recognises scanned pages and writes a real *invisible text layer* back into the PDF, so the output is genuinely searchable and selectable.
-- **Compress** — recompresses embedded images and cleans the file while leaving text as text.
-- **Protect** — AES-256 encryption with per-permission control, and password removal.
-- **Redact** — draw an area or find-and-redact every occurrence of a phrase; content is destroyed, not hidden. The box colour is selectable.
+- **Watermark & Stamps** — watermarks, approval stamps, page numbers, headers/footers and legal **Bates numbering**.
+- **Find & Replace** — genuine search-and-replace inside a PDF, each replacement taking the font, size and colour of the text it replaces.
+
+**Organise**
+- **Pages** — merge, split, reorder by drag-and-drop, rotate and delete.
+- **Auto-Split** — cut a combined bundle wherever a marker appears, so each invoice or statement becomes its own file, named from the matched text.
+- **Compare** — word-level diff between two versions, with changes highlighted in a downloadable copy.
+- **Compress** — recompress images and clean the file while text stays real, searchable text.
+
+**Protect**
+- **Find Sensitive Data** — scan for PAN, GSTIN, Aadhaar, IFSC, card and account numbers, emails, phones and IPs, then permanently redact the ones you choose. Card and Aadhaar numbers are checksum-verified (Luhn and Verhoeff) so ordinary figures are not flagged.
+- **Inspect & Sanitize** — reveal what travels with a PDF beyond its pages (author metadata, XMP, embedded files, JavaScript, hidden layers, annotations, links) and strip it before sharing.
+- **Redact** — remove content from the file rather than covering it, with a selectable box colour.
+- **Password Protect** — AES-256 encryption with per-permission control, and password removal.
+
+**Convert**
+- **OCR** — recognise scanned pages and write a real *invisible text layer* back into the PDF, so the output is genuinely searchable.
 - **Export** — Word/HTML, plain text, tables to CSV, embedded images, and page renders to PNG.
-- **Compare** — word-level diff between two versions, with the changes highlighted in a downloadable copy.
+
 
 ## Real redaction, real encryption
 
