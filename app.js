@@ -11,7 +11,7 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.2.0';
+const APP_VERSION = '4.3.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -142,12 +142,17 @@ const UI = {
 
     setupTabs() {
         $$('.tab-btn').forEach((btn) => {
-            btn.addEventListener('click', () => {
-                $$('.tab-btn').forEach((b) => b.classList.toggle('active', b === btn));
-                const target = `${btn.dataset.tab}-tab`;
-                $$('.tab-content').forEach((c) => c.classList.toggle('active', c.id === target));
-            });
+            btn.addEventListener('click', () => this.showTab(btn.dataset.tab));
         });
+    },
+
+    /** Single entry point for switching tools, shared by the nav and the dashboard. */
+    showTab(name) {
+        const target = `${name}-tab`;
+        if (!$(target)) return;
+        $$('.tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
+        $$('.tab-content').forEach((c) => c.classList.toggle('active', c.id === target));
+        window.scrollTo({ top: 0, behavior: 'smooth' });
     },
 
     setupTheme() {
@@ -333,11 +338,30 @@ const EditTool = {
         $$('[data-editmode]').forEach((btn) => btn.addEventListener('click', () => {
             this.mode = btn.dataset.editmode;
             $$('[data-editmode]').forEach((b) => b.classList.toggle('active', b === btn));
-            $('edit-hint').textContent = this.mode === 'TEXT'
-                ? 'Click a highlighted text block to edit it.'
-                : `Drag across the page to add a ${this.mode} annotation.`;
+            $('edit-hint').textContent =
+                this.mode === 'TEXT' ? 'Click a highlighted line to edit it.'
+              : this.mode === 'BLOCK' ? 'Click a paragraph to rewrite it — the text will rewrap to fit.'
+              : `Drag across the page to add a ${this.mode} annotation.`;
             this.drawSpans();
         }));
+
+        $('outline-add').addEventListener('click', () => {
+            const title = $('outline-title').value.trim();
+            if (!title) return UI.toast('Enter a bookmark title', 'error');
+            this.outline = this.outline || [];
+            this.outline.push([Number($('outline-level').value) || 1, title,
+                               Number($('outline-page').value) || 1]);
+            $('outline-title').value = '';
+            this.renderOutline();
+        });
+
+        $('outline-apply').addEventListener('click', async () => {
+            await UI.run('Updating bookmarks…', async () => {
+                const n = await engine.call('set_outline', this.view.docId,
+                                            JSON.stringify(this.outline || []));
+                UI.toast(`${n} bookmark(s) applied — save to keep them`, 'success');
+            });
+        });
 
         $('edit-save').addEventListener('click', () => this.view.save('edited.pdf'));
         $('edit-search-btn').addEventListener('click', () => this.search());
@@ -354,46 +378,95 @@ const EditTool = {
             const info = await this.view.load(file);
             $('edit-doc-info').innerHTML =
                 `<strong>${file.name}</strong><br>${info.pages} page(s) · ${formatSize(file.size)}`;
+            $('outline-page').max = info.pages;
             await this.refreshAnnots();
+            await this.loadOutline();
         });
     },
 
     async drawSpans() {
         const overlay = this.view.overlay;
         overlay.innerHTML = '';
-        if (this.mode !== 'TEXT') return;
-        this.spans = await engine.callJSON('get_spans', this.view.docId, this.view.page);
-        this.spans.forEach((span, index) => {
+        if (this.mode !== 'TEXT' && this.mode !== 'BLOCK') return;
+
+        // Line mode edits one span; paragraph mode edits a whole block and reflows.
+        const isBlock = this.mode === 'BLOCK';
+        this.spans = await engine.callJSON(isBlock ? 'get_blocks' : 'get_spans',
+                                           this.view.docId, this.view.page);
+        this.spans.forEach((item, index) => {
             const el = document.createElement('div');
-            el.className = 'span-box';
-            el.style.cssText = `left:${span.xFrac * 100}%;top:${span.yFrac * 100}%;` +
-                               `width:${span.wFrac * 100}%;height:${span.hFrac * 100}%`;
-            el.title = `${span.font} ${span.size}pt — click to edit`;
+            el.className = isBlock ? 'span-box span-box--block' : 'span-box';
+            el.style.cssText = `left:${item.xFrac * 100}%;top:${item.yFrac * 100}%;` +
+                               `width:${item.wFrac * 100}%;height:${item.hFrac * 100}%`;
+            el.title = isBlock
+                ? `Paragraph · ${item.lines} line(s) — click to rewrite`
+                : `${item.font} ${item.size}pt — click to edit`;
             el.addEventListener('click', () => this.promptEdit(index));
             overlay.appendChild(el);
         });
     },
 
     promptEdit(index) {
-        const span = this.spans[index];
-        this.pending = span;
-        $('text-modal-meta').textContent = `${span.font} · ${span.size}pt`;
-        $('text-modal-input').value = span.text;
+        const item = this.spans[index];
+        this.pending = item;
+        this.pendingIsBlock = this.mode === 'BLOCK';
+        $('text-modal-meta').textContent = this.pendingIsBlock
+            ? `Paragraph · ${item.lines} line(s) · ${item.font} ${item.size}pt — text will rewrap`
+            : `${item.font} · ${item.size}pt`;
+        const input = $('text-modal-input');
+        input.value = item.text;
+        input.rows = this.pendingIsBlock ? 8 : 3;
         $('text-modal').classList.remove('hidden');
-        $('text-modal-input').focus();
+        input.focus();
     },
 
     async applyEdit() {
-        const span = this.pending;
+        const item = this.pending;
+        const isBlock = this.pendingIsBlock;
         const next = $('text-modal-input').value;
         $('text-modal').classList.add('hidden');
-        if (!span || next === span.text) return;
-        await UI.run('Replacing text…', async () => {
-            await engine.call('edit_text', this.view.docId, this.view.page, span.bbox,
-                              next, span.font, span.size, span.colorInt, span.flags);
-            await this.view.render();
-            UI.toast('Text replaced in the PDF content stream', 'success');
+        if (!item || next === item.text) return;
+
+        await UI.run(isBlock ? 'Rewriting paragraph…' : 'Replacing text…', async () => {
+            if (isBlock) {
+                const res = await engine.callJSON('edit_block', this.view.docId, this.view.page,
+                                                  item.bbox, next, item.font, item.size,
+                                                  item.colorInt, item.flags, true);
+                await this.view.render();
+                UI.toast(res.grew
+                    ? `Paragraph rewritten at ${res.size}pt — the box grew to fit`
+                    : `Paragraph rewritten and rewrapped at ${res.size}pt`, 'success');
+            } else {
+                await engine.call('edit_text', this.view.docId, this.view.page, item.bbox,
+                                  next, item.font, item.size, item.colorInt, item.flags);
+                await this.view.render();
+                UI.toast('Text replaced in the PDF content stream', 'success');
+            }
         });
+    },
+
+    /* ---- bookmarks / outline ---- */
+
+    async loadOutline() {
+        this.outline = await engine.callJSON('get_outline', this.view.docId);
+        this.renderOutline();
+    },
+
+    renderOutline() {
+        const box = $('edit-outline');
+        if (!box) return;
+        box.innerHTML = this.outline.length
+            ? this.outline.map((row, i) => `
+                <div class="outline-row" style="padding-left:${(row[0] - 1) * 14}px">
+                    <span class="outline-title">${String(row[1]).replace(/[<>&]/g, '')}</span>
+                    <span class="muted">p${row[2]}</span>
+                    <button class="outline-del" data-out="${i}" title="Remove">✕</button>
+                </div>`).join('')
+            : '<p class="muted">No bookmarks yet.</p>';
+        $$('.outline-del', box).forEach((b) => b.addEventListener('click', () => {
+            this.outline.splice(Number(b.dataset.out), 1);
+            this.renderOutline();
+        }));
     },
 
     /** Drag a rectangle to place an annotation. */
@@ -1404,8 +1477,328 @@ const CompareTool = {
 
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/* 11. Find sensitive data                                             */
+/* ------------------------------------------------------------------ */
+
+const ScanTool = {
+    hits: [],
+
+    init() {
+        $('scan-file').addEventListener('change', (e) => this.open(e.target.files[0]));
+        $('scan-run').addEventListener('click', () => this.run());
+        $('scan-redact').addEventListener('click', () => this.redact());
+        $('scan-select-all').addEventListener('click', () => {
+            const boxes = $$('#scan-results input[type=checkbox]');
+            const turnOn = boxes.some((b) => !b.checked);
+            boxes.forEach((b) => { b.checked = turnOn; });
+        });
+    },
+
+    async open(file) {
+        if (!file) return;
+        await UI.run('Opening document…', async () => {
+            const info = await engine.callJSON('open_doc', 'scan', await fileToBytes(file));
+            $('scan-workspace').classList.remove('hidden');
+            $('scan-results').innerHTML = '';
+            $('scan-actions').classList.add('hidden');
+            $('scan-summary').innerHTML = `<strong>${file.name}</strong> — ${info.pages} page(s)`;
+        });
+    },
+
+    async run() {
+        const kinds = $$('#scan-kinds input:checked').map((b) => b.value);
+        if (!kinds.length) return UI.toast('Choose at least one thing to look for', 'error');
+
+        await UI.run('Scanning for sensitive data…', async () => {
+            const res = await engine.callJSON('scan_sensitive', 'scan', JSON.stringify(kinds));
+            this.hits = res.hits;
+            const box = $('scan-results');
+
+            if (!res.total) {
+                box.innerHTML = '<div class="result-box">Nothing matching was found in this document.</div>';
+                $('scan-actions').classList.add('hidden');
+                return;
+            }
+
+            const chips = Object.entries(res.summary)
+                .map(([k, n]) => `<span class="chip">${k} · ${n}</span>`).join('');
+            box.innerHTML = `<div class="chip-row">${chips}</div>` + res.hits.map((h, i) => `
+                <label class="scan-row">
+                    <input type="checkbox" data-hit="${i}" checked>
+                    <span class="scan-kind">${h.kind}</span>
+                    <code class="scan-text">${h.text.replace(/[<>&]/g, '')}</code>
+                    <span class="muted">page ${h.page + 1}</span>
+                    <span class="muted scan-label">${h.label}</span>
+                </label>`).join('');
+            $('scan-actions').classList.remove('hidden');
+            UI.toast(`${res.total} item(s) found`, 'success');
+        });
+    },
+
+    async redact() {
+        const chosen = $$('#scan-results input[type=checkbox]')
+            .filter((b) => b.checked).map((b) => this.hits[Number(b.dataset.hit)]);
+        if (!chosen.length) return UI.toast('Select at least one item', 'error');
+
+        await UI.run(`Redacting ${chosen.length} item(s)…`, async () => {
+            await engine.call('redact_hits', 'scan', JSON.stringify(chosen), $('scan-color').value);
+            const bytes = await engine.call('save', 'scan');
+            download(bytes, 'redacted.pdf');
+            UI.toast(`${chosen.length} item(s) permanently removed`, 'success');
+        });
+    },
+};
+
+/* ------------------------------------------------------------------ */
+/* 12. Inspect & sanitize                                              */
+/* ------------------------------------------------------------------ */
+
+const InspectTool = {
+    init() {
+        $('inspect-file').addEventListener('change', (e) => this.open(e.target.files[0]));
+        $('inspect-clean').addEventListener('click', () => this.clean());
+    },
+
+    async open(file) {
+        if (!file) return;
+        await UI.run('Inspecting document…', async () => {
+            await engine.call('open_doc', 'inspect', await fileToBytes(file));
+            const res = await engine.callJSON('inspect', 'inspect');
+            $('inspect-workspace').classList.remove('hidden');
+            $('inspect-result').classList.add('hidden');
+
+            const c = res.counts;
+            $('inspect-counts').innerHTML =
+                `<strong>${file.name}</strong> — ${res.pages} page(s) · ` +
+                `<span class="lvl lvl--risk">${c.risk || 0} risk</span> ` +
+                `<span class="lvl lvl--warn">${c.warn || 0} to review</span> ` +
+                `<span class="lvl lvl--info">${c.info || 0} informational</span>`;
+
+            $('inspect-findings').innerHTML = res.findings.length
+                ? res.findings.map((f) => `
+                    <div class="finding finding--${f.level}">
+                        <span class="finding__area">${f.area}</span>
+                        <span class="finding__detail">${String(f.detail).replace(/[<>]/g, '')}</span>
+                    </div>`).join('')
+                : '<div class="result-box">Nothing hidden was found — this document is clean.</div>';
+        });
+    },
+
+    async clean() {
+        await UI.run('Sanitizing…', async () => {
+            const res = await engine.callJSON('sanitize', 'inspect',
+                $('san-metadata').checked, $('san-attach').checked, $('san-js').checked,
+                $('san-annots').checked, $('san-links').checked, $('san-forms').checked,
+                $('san-hidden').checked);
+            const bytes = await engine.call('save', 'inspect');
+            download(bytes, 'sanitized.pdf');
+            const box = $('inspect-result');
+            box.classList.remove('hidden');
+            box.innerHTML = res.removed.length
+                ? `Removed:<ul>${res.removed.map((r) => `<li>${r}</li>`).join('')}</ul>`
+                : 'Nothing needed removing.';
+            UI.toast('Sanitized copy saved', 'success');
+        });
+    },
+};
+
+/* ------------------------------------------------------------------ */
+/* 13. Find & replace                                                  */
+/* ------------------------------------------------------------------ */
+
+const ReplaceTool = {
+    init() {
+        $('replace-file').addEventListener('change', (e) => this.open(e.target.files[0]));
+        $('replace-preview').addEventListener('click', () => this.preview());
+        $('replace-run').addEventListener('click', () => this.run());
+    },
+
+    async open(file) {
+        if (!file) return;
+        await UI.run('Opening document…', async () => {
+            const info = await engine.callJSON('open_doc', 'replace', await fileToBytes(file));
+            $('replace-workspace').classList.remove('hidden');
+            $('replace-result').classList.add('hidden');
+            $('replace-summary').innerHTML = `<strong>${file.name}</strong> — ${info.pages} page(s)`;
+        });
+    },
+
+    async preview() {
+        const find = $('replace-find').value;
+        if (!find) return UI.toast('Enter text to find', 'error');
+        await UI.run('Searching…', async () => {
+            const res = await engine.callJSON('find_occurrences', 'replace', find,
+                                              $('replace-pages').value);
+            const box = $('replace-result');
+            box.classList.remove('hidden');
+            box.innerHTML = res.count
+                ? `<strong>${res.count}</strong> match(es): ` +
+                  res.hits.slice(0, 12).map((h) => `page ${h.page + 1}${h.font ? ` (${h.font} ${h.size}pt)` : ''}`).join(', ') +
+                  (res.count > 12 ? ' …' : '')
+                : 'No matches found.';
+        });
+    },
+
+    async run() {
+        const find = $('replace-find').value;
+        if (!find) return UI.toast('Enter text to find', 'error');
+        await UI.run('Replacing…', async () => {
+            const n = await engine.call('find_replace', 'replace', find,
+                                        $('replace-with').value, $('replace-pages').value);
+            if (!n) return UI.toast('No matches found', 'error');
+            const bytes = await engine.call('save', 'replace');
+            download(bytes, 'replaced.pdf');
+            const box = $('replace-result');
+            box.classList.remove('hidden');
+            box.innerHTML = `Replaced <strong>${n}</strong> occurrence(s). The original text was removed from the file, not covered over.`;
+            UI.toast(`${n} replaced`, 'success');
+        });
+    },
+};
+
+/* ------------------------------------------------------------------ */
+/* 14. Auto-split by content                                           */
+/* ------------------------------------------------------------------ */
+
+const AutoSplitTool = {
+    init() {
+        $('autosplit-file').addEventListener('change', (e) => this.open(e.target.files[0]));
+        $('autosplit-preview').addEventListener('click', () => this.preview());
+        $('autosplit-run').addEventListener('click', () => this.run());
+    },
+
+    async open(file) {
+        if (!file) return;
+        this.name = file.name.replace(/\.pdf$/i, '');
+        await UI.run('Opening document…', async () => {
+            const info = await engine.callJSON('open_doc', 'autosplit', await fileToBytes(file));
+            $('autosplit-workspace').classList.remove('hidden');
+            $('autosplit-result').innerHTML = '';
+            $('autosplit-run').disabled = true;
+            $('autosplit-summary').innerHTML = `<strong>${file.name}</strong> — ${info.pages} page(s)`;
+        });
+    },
+
+    args() {
+        return [$('autosplit-pattern').value, $('autosplit-regex').checked,
+                $('autosplit-name').checked];
+    },
+
+    async preview() {
+        const [pattern] = this.args();
+        if (!pattern) return UI.toast('Enter a marker to split on', 'error');
+        await UI.run('Finding split points…', async () => {
+            const res = await engine.callJSON('split_by_pattern', 'autosplit', ...this.args(), true);
+            const box = $('autosplit-result');
+            if (!res.parts.length) {
+                box.innerHTML = `<div class="result-box">${res.message || 'No page matched.'}</div>`;
+                $('autosplit-run').disabled = true;
+                return;
+            }
+            box.innerHTML = `<div class="result-box">Will produce <strong>${res.count}</strong> file(s):</div>` +
+                res.parts.map((p) => `
+                    <div class="split-row">
+                        <code>${p.name.replace(/[<>&]/g, '')}</code>
+                        <span class="muted">pages ${p.from}–${p.to} (${p.pages})</span>
+                    </div>`).join('');
+            $('autosplit-run').disabled = false;
+        });
+    },
+
+    async run() {
+        await UI.run('Splitting…', async () => {
+            const res = await engine.callJSON('split_by_pattern', 'autosplit', ...this.args(), false);
+            if (!res.parts.length) return UI.toast('No page matched', 'error');
+            const zip = new JSZip();
+            const used = new Map();
+            res.parts.forEach((p) => {
+                // Two invoices can carry the same marker; keep both.
+                const n = (used.get(p.name) || 0) + 1;
+                used.set(p.name, n);
+                zip.file(n > 1 ? p.name.replace(/\.pdf$/, `-${n}.pdf`) : p.name, b64ToBytes(p.b64));
+            });
+            download(await zip.generateAsync({ type: 'blob' }), `${this.name}-split.zip`, 'application/zip');
+            UI.toast(`Split into ${res.count} files`, 'success');
+        });
+    },
+};
+
+/* ------------------------------------------------------------------ */
+/* dashboard                                                           */
+/* ------------------------------------------------------------------ */
+
+// One manifest drives the home cards, so adding a tool means editing one place.
+const TOOL_CARDS = [
+    { group: 'Edit', tab: 'edit', icon: '📝', name: 'Edit Text',
+      blurb: 'Rewrite text for real — line by line or a whole paragraph with reflow.' },
+    { group: 'Edit', tab: 'sign', icon: '🖊️', name: 'Fill & Sign',
+      blurb: 'Draw or type a signature, add dates and checks, fill form fields.' },
+    { group: 'Edit', tab: 'stamp', icon: '💧', name: 'Watermark & Stamps',
+      blurb: 'Watermarks, approval stamps, page numbers and Bates numbering.' },
+    { group: 'Edit', tab: 'replace', icon: '🔁', name: 'Find & Replace',
+      blurb: 'Search and replace inside a PDF, matching the original styling.', badge: 'New' },
+
+    { group: 'Organise', tab: 'pages', icon: '📚', name: 'Pages',
+      blurb: 'Merge, split, reorder by drag, rotate and delete.' },
+    { group: 'Organise', tab: 'autosplit', icon: '✂️', name: 'Auto-Split',
+      blurb: 'Break a bundle into one file per invoice, named from the text.', badge: 'New' },
+    { group: 'Organise', tab: 'compare', icon: '⚖️', name: 'Compare',
+      blurb: 'Word-level diff between two versions, with changes highlighted.' },
+    { group: 'Organise', tab: 'compress', icon: '🗜️', name: 'Compress',
+      blurb: 'Shrink the file while text stays real, searchable text.' },
+
+    { group: 'Protect', tab: 'scan', icon: '🛡️', name: 'Find Sensitive Data',
+      blurb: 'Detect PAN, GSTIN, Aadhaar, cards and more — then redact them.', badge: 'New' },
+    { group: 'Protect', tab: 'inspect', icon: '🕵️', name: 'Inspect & Sanitize',
+      blurb: 'See what hides in a PDF — metadata, scripts, attachments — and strip it.', badge: 'New' },
+    { group: 'Protect', tab: 'redact', icon: '⬛', name: 'Redact',
+      blurb: 'Black out content so it is deleted from the file, not just covered.' },
+    { group: 'Protect', tab: 'protect', icon: '🔒', name: 'Password Protect',
+      blurb: 'AES-256 encryption with per-permission control.' },
+
+    { group: 'Convert', tab: 'ocr', icon: '🔍', name: 'OCR',
+      blurb: 'Turn a scan into a genuinely searchable, selectable document.' },
+    { group: 'Convert', tab: 'export', icon: '📤', name: 'Export',
+      blurb: 'Word, plain text, tables to CSV, images and page renders.' },
+];
+
+const Dashboard = {
+    init() {
+        const root = $('dashboard');
+        if (!root) return;
+        const groups = [];
+        TOOL_CARDS.forEach((card) => {
+            // Skip anything whose tab is missing, so the two can't fall out of sync.
+            if (!$(`${card.tab}-tab`)) return;
+            let group = groups.find((g) => g.name === card.group);
+            if (!group) { group = { name: card.group, cards: [] }; groups.push(group); }
+            group.cards.push(card);
+        });
+
+        root.innerHTML = groups.map((g) => `
+            <section class="dash-group">
+                <h3 class="dash-group__title">${g.name}</h3>
+                <div class="dash-grid">
+                    ${g.cards.map((c) => `
+                        <button class="dash-card" data-goto="${c.tab}">
+                            <span class="dash-card__icon">${c.icon}</span>
+                            <span class="dash-card__name">${c.name}${
+                                c.badge ? `<span class="dash-card__badge">${c.badge}</span>` : ''}</span>
+                            <span class="dash-card__blurb">${c.blurb}</span>
+                        </button>`).join('')}
+                </div>
+            </section>`).join('');
+
+        $$('[data-goto]', root).forEach((btn) => {
+            btn.addEventListener('click', () => UI.showTab(btn.dataset.goto));
+        });
+    },
+};
+
 const Tools = [EditTool, PagesTool, SignTool, StampTool, OcrTool,
-               CompressTool, ProtectTool, RedactTool, ExportTool, CompareTool];
+               CompressTool, ProtectTool, RedactTool, ExportTool, CompareTool,
+               ScanTool, InspectTool, ReplaceTool, AutoSplitTool, Dashboard];
 
 document.addEventListener('DOMContentLoaded', () => UI.init());
-window.PDFSuite = { engine, UI, Tools };
+window.PDFSuite = { engine, UI, Tools, TOOL_CARDS };

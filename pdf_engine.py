@@ -943,3 +943,557 @@ def highlight_differences(doc_id, other_id):
                 annot.update()
                 marked += 1
     return marked
+
+
+# --------------------------------------------------------------------------
+# sensitive-data discovery
+# --------------------------------------------------------------------------
+
+# Ordered most-specific first. When two patterns claim overlapping text the
+# earlier entry wins, which stops an IFSC code being found inside a GSTIN or a
+# "phone number" being found inside a card number.
+_SENSITIVE_PATTERNS = [
+    ("GSTIN",    r"\b\d{2}[A-Z]{5}\d{4}[A-Z]\d[Z][A-Z\d]\b",            "GST registration number"),
+    ("PAN",      r"\b[A-Z]{5}\d{4}[A-Z]\b",                             "Permanent Account Number"),
+    ("IFSC",     r"\b[A-Z]{4}0[A-Z0-9]{6}\b",                           "Bank branch (IFSC) code"),
+    ("Card",     r"\b(?:\d[ -]?){12,18}\d\b",                           "Payment card number"),
+    ("Aadhaar",  r"\b[2-9]\d{3}[ -]?\d{4}[ -]?\d{4}\b",                 "Aadhaar number"),
+    ("Email",    r"\b[\w.+-]+@[\w-]+\.[\w.]{2,}\b",                     "Email address"),
+    ("Phone",    r"(?:\+91[ -]?)?\b[6-9]\d{9}\b",                       "Mobile number"),
+    ("Account",  r"\b\d{9,18}\b",                                       "Bank account number"),
+    ("IPAddr",   r"\b(?:\d{1,3}\.){3}\d{1,3}\b",                        "IP address"),
+]
+
+_VERHOEFF_D = (
+    (0,1,2,3,4,5,6,7,8,9),(1,2,3,4,0,6,7,8,9,5),(2,3,4,0,1,7,8,9,5,6),
+    (3,4,0,1,2,8,9,5,6,7),(4,0,1,2,3,9,5,6,7,8),(5,9,8,7,6,0,4,3,2,1),
+    (6,5,9,8,7,1,0,4,3,2),(7,6,5,9,8,2,1,0,4,3),(8,7,6,5,9,3,2,1,0,4),
+    (9,8,7,6,5,4,3,2,1,0),
+)
+_VERHOEFF_P = (
+    (0,1,2,3,4,5,6,7,8,9),(1,5,7,6,2,8,3,0,9,4),(5,8,0,3,7,9,6,1,4,2),
+    (8,9,1,6,0,4,3,5,2,7),(9,4,5,3,1,2,6,8,7,0),(4,2,8,6,5,7,3,9,0,1),
+    (2,7,9,3,8,0,6,4,1,5),(7,0,4,6,9,1,3,2,5,8),
+)
+
+
+def _luhn_ok(digits):
+    """Standard card checksum — rejects most random digit runs."""
+    total, alt = 0, False
+    for ch in reversed(digits):
+        n = int(ch)
+        if alt:
+            n *= 2
+            if n > 9:
+                n -= 9
+        total += n
+        alt = not alt
+    return total % 10 == 0
+
+
+def _verhoeff_ok(digits):
+    """Aadhaar checksum. Without it any 12-digit invoice figure looks like one."""
+    c = 0
+    for i, ch in enumerate(reversed(digits)):
+        c = _VERHOEFF_D[c][_VERHOEFF_P[i % 8][int(ch)]]
+    return c == 0
+
+
+def _validate_hit(kind, text):
+    """Second-stage check so a matching shape alone is not enough."""
+    digits = "".join(ch for ch in text if ch.isdigit())
+    if kind == "Card":
+        return 13 <= len(digits) <= 19 and _luhn_ok(digits)
+    if kind == "Aadhaar":
+        return len(digits) == 12 and _verhoeff_ok(digits)
+    if kind == "IPAddr":
+        return all(0 <= int(p) <= 255 for p in text.split("."))
+    if kind == "Account":
+        # A bare digit run is the weakest signal; keep it plausible.
+        return 9 <= len(digits) <= 18
+    return True
+
+
+def _page_word_index(page):
+    """Join a page's words into one string, remembering each word's rect.
+
+    Working from positioned words (rather than the raw text) means a match that
+    straddles a line break still maps back to the right rectangles.
+    """
+    words = page.get_text("words")
+    parts, spans = [], []
+    cursor = 0
+    for w in words:
+        token = w[4]
+        if not token:
+            continue
+        start = cursor
+        parts.append(token)
+        cursor += len(token)
+        spans.append((start, cursor, pymupdf.Rect(w[0], w[1], w[2], w[3])))
+        parts.append(" ")
+        cursor += 1
+    return "".join(parts), spans
+
+
+def scan_sensitive(doc_id, kinds_json=None):
+    """Find personal and financial identifiers across the document.
+
+    Returns one entry per occurrence with the page, the matched text and the
+    rectangles covering it, ready to feed straight into redaction.
+    """
+    import re
+
+    doc = _doc(doc_id)
+    wanted = None
+    if kinds_json:
+        wanted = set(json.loads(kinds_json) if isinstance(kinds_json, str) else kinds_json)
+
+    compiled = [(k, re.compile(p), label) for k, p, label in _SENSITIVE_PATTERNS
+                if wanted is None or k in wanted]
+
+    results = []
+    for pno, page in enumerate(doc):
+        text, spans = _page_word_index(page)
+        if not text.strip():
+            continue
+        pw, ph = page.rect.width, page.rect.height
+
+        claimed = []          # char ranges already taken by a more specific pattern
+        for kind, rx, label in compiled:
+            for m in rx.finditer(text):
+                start, end = m.span()
+                value = m.group().strip()
+                if not _validate_hit(kind, value):
+                    continue
+                if any(start < c_end and end > c_start for c_start, c_end in claimed):
+                    continue
+                claimed.append((start, end))
+
+                rects = [r for s, e, r in spans if s < end and e > start]
+                if not rects:
+                    continue
+                results.append({
+                    "page": pno,
+                    "kind": kind,
+                    "label": label,
+                    "text": value,
+                    "rects": [{"xFrac": r.x0 / pw, "yFrac": r.y0 / ph,
+                               "wFrac": r.width / pw, "hFrac": r.height / ph} for r in rects],
+                })
+
+    summary = {}
+    for hit in results:
+        summary[hit["kind"]] = summary.get(hit["kind"], 0) + 1
+    return json.dumps({"hits": results, "summary": summary, "total": len(results)})
+
+
+def redact_hits(doc_id, hits_json, fill="#000000"):
+    """Permanently remove the scanned hits the user selected."""
+    doc = _doc(doc_id)
+    hits = json.loads(hits_json) if isinstance(hits_json, str) else hits_json
+    colour = _hex_to_rgb(fill)
+    touched = set()
+
+    for hit in hits:
+        page = doc[int(hit["page"])]
+        for r in hit["rects"]:
+            rect = _rect_from_fracs(page, float(r["xFrac"]), float(r["yFrac"]),
+                                    float(r["xFrac"]) + float(r["wFrac"]),
+                                    float(r["yFrac"]) + float(r["hFrac"]))
+            page.add_redact_annot(rect, fill=colour)
+        touched.add(int(hit["page"]))
+
+    for pno in touched:
+        doc[pno].apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE)
+    return len(hits)
+
+
+# --------------------------------------------------------------------------
+# document inspection & sanitising
+# --------------------------------------------------------------------------
+
+def inspect(doc_id):
+    """Report what a PDF carries beyond its visible pages.
+
+    Answers the practical question "is this safe to send outside?" — author
+    names, revision tooling, attachments, scripts, hidden layers and off-page
+    annotations all travel with a file and are easy to forget.
+    """
+    doc = _doc(doc_id)
+    findings = []
+
+    def flag(level, area, detail):
+        findings.append({"level": level, "area": area, "detail": detail})
+
+    meta = {k: v for k, v in (doc.metadata or {}).items() if v}
+    for key in ("author", "title", "subject", "keywords", "creator", "producer"):
+        if meta.get(key):
+            flag("warn" if key in ("author", "keywords", "subject") else "info",
+                 f"Metadata · {key}", meta[key])
+
+    try:
+        xml = doc.get_xml_metadata()
+        if xml:
+            flag("warn", "XMP metadata", f"{len(xml)} characters of embedded XMP")
+    except Exception:
+        pass
+
+    try:
+        n = doc.embfile_count()
+        if n:
+            names = ", ".join(doc.embfile_names())
+            flag("risk", "Embedded files", f"{n} attached file(s): {names}")
+    except Exception:
+        pass
+
+    # JavaScript lives under the catalog's /Names tree.
+    try:
+        cat = doc.pdf_catalog()
+        kind, value = doc.xref_get_key(cat, "Names/JavaScript")
+        if kind and kind != "null":
+            flag("risk", "JavaScript", "Document-level JavaScript is present")
+    except Exception:
+        pass
+
+    try:
+        ocgs = doc.get_ocgs()
+        if ocgs:
+            hidden = [v.get("name", "?") for v in ocgs.values() if not v.get("on", True)]
+            flag("warn" if hidden else "info", "Optional layers",
+                 f"{len(ocgs)} layer(s)" + (f"; hidden: {', '.join(hidden)}" if hidden else ""))
+    except Exception:
+        pass
+
+    annots, links, scanned = 0, 0, []
+    for pno, page in enumerate(doc):
+        annots += len(list(page.annots()))
+        page_links = page.get_links()
+        links += len(page_links)
+        for link in page_links:
+            if link.get("uri"):
+                flag("info", "External link", f"page {pno + 1}: {link['uri']}")
+        if len(page.get_text().strip()) < 12 and page.get_images():
+            scanned.append(pno + 1)
+
+    if annots:
+        flag("warn", "Annotations", f"{annots} comment/markup annotation(s) still attached")
+    if scanned:
+        preview = ", ".join(str(p) for p in scanned[:12])
+        flag("info", "Scanned pages",
+             f"{len(scanned)} page(s) have no searchable text (p{preview}"
+             + ("…)" if len(scanned) > 12 else ")"))
+    if doc.is_form_pdf:
+        flag("warn", "Form fields", "Fillable form fields are present and may hold entered data")
+
+    fonts, embedded = set(), 0
+    for page in doc:
+        for f in page.get_fonts(full=True):
+            fonts.add(f[3])
+            if f[1]:
+                embedded += 1
+    if fonts:
+        flag("info", "Fonts", f"{len(fonts)} font(s): {', '.join(sorted(fonts)[:6])}")
+
+    order = {"risk": 0, "warn": 1, "info": 2}
+    findings.sort(key=lambda f: order.get(f["level"], 3))
+    counts = {"risk": 0, "warn": 0, "info": 0}
+    for f in findings:
+        counts[f["level"]] = counts.get(f["level"], 0) + 1
+
+    return json.dumps({
+        "findings": findings,
+        "counts": counts,
+        "pages": doc.page_count,
+        "encrypted": bool(doc.needs_pass),
+    })
+
+
+def sanitize(doc_id, metadata=True, attachments=True, javascript=True,
+             annotations=True, links=True, forms=True, hidden_text=True):
+    """Strip the parts of a document that travel invisibly.
+
+    Returns a plain-language list of what was removed so the action is auditable.
+    """
+    doc = _doc(doc_id)
+    removed = []
+
+    before_meta = {k: v for k, v in (doc.metadata or {}).items() if v}
+    before_annots = sum(len(list(p.annots())) for p in doc)
+    before_links = sum(len(p.get_links()) for p in doc)
+    try:
+        before_files = doc.embfile_count()
+    except Exception:
+        before_files = 0
+
+    doc.scrub(
+        metadata=bool(metadata),
+        attached_files=bool(attachments),
+        embedded_files=bool(attachments),
+        javascript=bool(javascript),
+        remove_links=bool(links),
+        reset_fields=bool(forms),
+        hidden_text=bool(hidden_text),
+        clean_pages=True,
+        redactions=True,
+        reset_responses=bool(annotations),
+        thumbnails=True,
+        xml_metadata=bool(metadata),
+    )
+
+    if metadata and before_meta:
+        removed.append(f"Document metadata ({', '.join(sorted(before_meta))})")
+    if attachments and before_files:
+        removed.append(f"{before_files} embedded file(s)")
+    if javascript:
+        removed.append("Any document-level JavaScript")
+    if links and before_links:
+        removed.append(f"{before_links} link(s)")
+    if annotations and before_annots:
+        removed.append(f"Responses on {before_annots} annotation(s)")
+    if hidden_text:
+        removed.append("Hidden (invisible-render) text")
+
+    return json.dumps({"removed": removed})
+
+
+# --------------------------------------------------------------------------
+# find & replace across the document
+# --------------------------------------------------------------------------
+
+def _span_at(page, rect):
+    """The text span sitting under a rectangle, for font/size/colour matching."""
+    best, best_area = None, 0
+    for block in page.get_text("dict")["blocks"]:
+        if block.get("type") != 0:
+            continue
+        for line in block["lines"]:
+            for span in line["spans"]:
+                sr = pymupdf.Rect(span["bbox"])
+                inter = sr & rect
+                if not inter.is_empty:
+                    area = inter.get_area()
+                    if area > best_area:
+                        best, best_area = span, area
+    return best
+
+
+def find_occurrences(doc_id, needle, pages_spec=""):
+    """Preview every place a phrase appears, before changing anything."""
+    doc = _doc(doc_id)
+    out = []
+    for pno in _page_indices(doc, pages_spec):
+        page = doc[pno]
+        pw, ph = page.rect.width, page.rect.height
+        for rect in page.search_for(needle):
+            span = _span_at(page, rect)
+            out.append({
+                "page": pno,
+                "font": (span or {}).get("font", ""),
+                "size": round((span or {}).get("size", 0), 1),
+                "xFrac": rect.x0 / pw, "yFrac": rect.y0 / ph,
+                "wFrac": rect.width / pw, "hFrac": rect.height / ph,
+            })
+    return json.dumps({"count": len(out), "hits": out})
+
+
+def find_replace(doc_id, needle, replacement, pages_spec=""):
+    """Replace every occurrence, keeping each hit's own font, size and colour.
+
+    The original glyphs are removed from the content stream rather than covered,
+    so the replaced text cannot be recovered by selecting the page.
+    """
+    doc = _doc(doc_id)
+    replaced = 0
+
+    for pno in _page_indices(doc, pages_spec):
+        page = doc[pno]
+        hits = page.search_for(needle)
+        if not hits:
+            continue
+
+        # Capture styling before redaction destroys the spans.
+        styled = []
+        for rect in hits:
+            span = _span_at(page, rect)
+            styled.append((
+                rect,
+                _pick_font(span["font"] if span else "", span["flags"] if span else 0),
+                float(span["size"]) if span else rect.height * 0.8,
+                _int_to_rgb(int(span["color"])) if span else (0, 0, 0),
+            ))
+            page.add_redact_annot(rect)
+
+        page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE)
+
+        for rect, font, size, colour in styled:
+            if replacement:
+                # Allow a little bleed past the old width; text rarely matches length.
+                size = _fit_size(replacement, font, size, rect.width * 1.8)
+                page.insert_text((rect.x0, rect.y1 - size * 0.22), replacement,
+                                 fontsize=size, fontname=font, color=colour)
+            replaced += 1
+
+    return replaced
+
+
+# --------------------------------------------------------------------------
+# split a bundle wherever a pattern appears
+# --------------------------------------------------------------------------
+
+def _safe_name(text, fallback):
+    keep = "".join(c if (c.isalnum() or c in " -_") else "-" for c in text).strip()
+    keep = "-".join(keep.split())
+    return (keep[:60] or fallback)
+
+
+def split_by_pattern(doc_id, pattern, use_regex=False, name_from_match=True, preview=False):
+    """Cut a combined document into parts wherever a marker appears.
+
+    Built for statement and invoice bundles: each page carrying the marker
+    starts a new document, and the matched text can name the file.
+    """
+    import re
+
+    doc = _doc(doc_id)
+    rx = re.compile(pattern, re.I) if use_regex else None
+
+    starts = []
+    for pno, page in enumerate(doc):
+        text = page.get_text()
+        matched = None
+        if use_regex:
+            m = rx.search(text)
+            matched = m.group(0) if m else None
+        elif pattern.lower() in text.lower():
+            idx = text.lower().index(pattern.lower())
+            # Take the rest of that line so an invoice number comes along too.
+            matched = text[idx:idx + 60].splitlines()[0]
+        if matched:
+            starts.append((pno, matched.strip()))
+
+    if not starts:
+        return json.dumps({"parts": [], "message": "No page matched that pattern."})
+
+    parts = []
+    for i, (start, matched) in enumerate(starts):
+        end = starts[i + 1][0] - 1 if i + 1 < len(starts) else doc.page_count - 1
+        name = _safe_name(matched, f"part-{i + 1}") if name_from_match else f"part-{i + 1}"
+        entry = {"name": f"{name}.pdf", "from": start + 1, "to": end + 1,
+                 "pages": end - start + 1, "match": matched}
+        if not preview:
+            piece = pymupdf.open()
+            piece.insert_pdf(doc, from_page=start, to_page=end)
+            entry["b64"] = base64.b64encode(piece.tobytes(garbage=3, deflate=True)).decode()
+            piece.close()
+        parts.append(entry)
+
+    return json.dumps({"parts": parts, "count": len(parts)})
+
+
+# --------------------------------------------------------------------------
+# paragraph-level editing and the document outline
+# --------------------------------------------------------------------------
+
+def get_blocks(doc_id, pno):
+    """Paragraph-sized text blocks, for editing a whole passage at once."""
+    page = _doc(doc_id)[int(pno)]
+    pw, ph = page.rect.width, page.rect.height
+    out = []
+    for block in page.get_text("dict")["blocks"]:
+        if block.get("type") != 0:
+            continue
+        spans = [s for line in block["lines"] for s in line["spans"] if s["text"].strip()]
+        if not spans:
+            continue
+        text = "".join(
+            "".join(s["text"] for s in line["spans"]) + " " for line in block["lines"]
+        ).strip()
+        if not text:
+            continue
+        lead = max(spans, key=lambda s: len(s["text"]))
+        x0, y0, x1, y1 = block["bbox"]
+        out.append({
+            "text": text,
+            "font": lead["font"],
+            "size": round(lead["size"], 2),
+            "colorInt": lead["color"],
+            "flags": lead["flags"],
+            "bbox": [x0, y0, x1, y1],
+            "lines": len(block["lines"]),
+            "xFrac": x0 / pw, "yFrac": y0 / ph,
+            "wFrac": (x1 - x0) / pw, "hFrac": (y1 - y0) / ph,
+        })
+    return json.dumps(out)
+
+
+def edit_block(doc_id, pno, bbox, new_text, font_name="", size=0, color_int=0,
+               flags=0, grow=True):
+    """Replace a whole paragraph, reflowing the replacement inside its box.
+
+    Unlike span editing this rewraps across lines, so the new wording does not
+    have to be the same length as the old.
+    """
+    doc = _doc(doc_id)
+    page = doc[int(pno)]
+    x0, y0, x1, y1 = [float(v) for v in bbox]
+    rect = pymupdf.Rect(x0, y0, x1, y1)
+
+    font = _pick_font(font_name, int(flags))
+    colour = _int_to_rgb(int(color_int))
+    start_size = float(size) or 11.0
+
+    page.add_redact_annot(rect)
+    page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE)
+
+    if not new_text:
+        return json.dumps({"ok": True, "size": 0, "grew": False})
+
+    # A paragraph may need more room than the original occupied. Try the box as
+    # it is, then allow it to grow downward, and only then shrink the type.
+    target = pymupdf.Rect(rect)
+    grew = False
+    for attempt in range(3):
+        probe = pymupdf.open()
+        probe_page = probe.new_page(width=page.rect.width, height=page.rect.height)
+        leftover = probe_page.insert_textbox(target, new_text, fontsize=start_size,
+                                             fontname=font, align=0)
+        probe.close()
+        if leftover >= 0:
+            break
+        if grow and attempt == 0:
+            room = page.rect.height - target.y1 - 24
+            if room > 12:
+                target = pymupdf.Rect(target.x0, target.y0, target.x1,
+                                      min(page.rect.height - 24, target.y1 + room))
+                grew = True
+                continue
+        start_size = max(5.0, start_size - 1.0)
+
+    page.insert_textbox(target, new_text, fontsize=start_size, fontname=font,
+                        color=colour, align=0)
+    return json.dumps({"ok": True, "size": round(start_size, 1), "grew": grew})
+
+
+def get_outline(doc_id):
+    """The document's bookmark tree as [[level, title, page], …]."""
+    return json.dumps(_doc(doc_id).get_toc() or [])
+
+
+def set_outline(doc_id, toc_json):
+    """Replace the bookmark tree. Levels must start at 1 and step by one."""
+    doc = _doc(doc_id)
+    toc = json.loads(toc_json) if isinstance(toc_json, str) else toc_json
+
+    cleaned, last_level = [], 0
+    for row in toc:
+        level = max(1, int(row[0]))
+        title = str(row[1]).strip() or "Untitled"
+        page = min(max(1, int(row[2])), doc.page_count)
+        # PDF outlines reject a jump of more than one level at a time.
+        level = min(level, last_level + 1)
+        cleaned.append([level, title, page])
+        last_level = level
+
+    doc.set_toc(cleaned)
+    return len(cleaned)
