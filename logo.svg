@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="MiyeePDF">
+  <title>MiyeePDF</title>
+  <defs>
+    <linearGradient id="miyeeTeal" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2FA8B6"/>
+      <stop offset="1" stop-color="#1A6873"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Document silhouette: rounded tile with the top-right corner turned down. -->
+  <path d="M12 0h30l22 22v30a12 12 0 0 1-12 12H12A12 12 0 0 1 0 52V12A12 12 0 0 1 12 0Z"
+        fill="url(#miyeeTeal)"/>
+
+  <!-- The folded flap, lightened so the corner reads as a page turn. -->
+  <path d="M42 0l22 22H42Z" fill="#FFFFFF" fill-opacity="0.32"/>
+
+  <!-- Geometric M, stroked rather than set in type so no font is required. -->
+  <path d="M14 50V28l18 14 18-14v22"
+        fill="none" stroke="#FFFFFF" stroke-width="7"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

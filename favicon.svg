@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="MiyeePDF">
+  <title>MiyeePDF</title>
+  <defs>
+    <linearGradient id="miyeeTealIcon" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2FA8B6"/>
+      <stop offset="1" stop-color="#1A6873"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Same mark as logo.svg, tuned for small sizes: tighter radius and a
+       heavier stroke so the M still reads at 16px. The tile is a saturated
+       teal, which stays visible on both light and dark browser chrome. -->
+  <path d="M10 0h32l22 22v32a10 10 0 0 1-10 10H10A10 10 0 0 1 0 54V10A10 10 0 0 1 10 0Z"
+        fill="url(#miyeeTealIcon)"/>
+  <path d="M42 0l22 22H42Z" fill="#FFFFFF" fill-opacity="0.38"/>
+  <path d="M13 51V27l19 15 19-15v24"
+        fill="none" stroke="#FFFFFF" stroke-width="8"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
