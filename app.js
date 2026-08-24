@@ -1,4 +1,4 @@
-/* MiyeePDF — UI layer.
+/* MiyeePDF - UI layer.
  *
  * All PDF work happens in pdf_engine.py, so this file only handles chrome:
  * loading files, drawing pages, collecting options and shuttling them across
@@ -11,7 +11,7 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.7.0';
+const APP_VERSION = '4.7.1';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -31,7 +31,7 @@ class PyEngine {
     /** Boot the engine. Safe to await from anywhere; only runs once.
      *
      * Progress is reported through `onStep`, which can be attached after boot
-     * has already started — that lets the download begin the moment this file
+     * has already started - that lets the download begin the moment this file
      * parses, rather than waiting for DOMContentLoaded and the UI wiring.
      */
     boot() {
@@ -47,7 +47,7 @@ class PyEngine {
 
     /** Approximate the wheel download for the progress bar.
      *
-     * loadPackage() owns the actual fetch — it is the only thing that reliably
+     * loadPackage() owns the actual fetch - it is the only thing that reliably
      * installs the package, and prefetching separately made the browser
      * download all 17 MB twice (loadPackage treats a path as a URL, so it
      * cannot be handed bytes, and HTTP-cache dedupe is not dependable). So the
@@ -170,7 +170,7 @@ const FLAG_ITALIC = 2, FLAG_SERIF = 4, FLAG_MONO = 8, FLAG_BOLD = 16;
 /** A widely installed stack that resembles a PDF font the browser cannot load.
  *
  * Used when a font is not embedded, or is embedded in a format (bare CFF,
- * Type 1) that browsers refuse — the on-screen text still reads as the same
+ * Type 1) that browsers refuse - the on-screen text still reads as the same
  * kind of face as the page around it.
  */
 function lookalikeFont(name, flags = 0) {
@@ -204,7 +204,7 @@ const UI = {
         this.setupTheme();
         this.setupPickers();
         // Wire every tool straight away. These only attach listeners and render
-        // markup, so the app is fully browsable while the engine downloads —
+        // markup, so the app is fully browsable while the engine downloads -
         // waiting for it here is what made the page look frozen on first visit.
         Tools.forEach((t) => { if (t.init) t.init(); });
         this.bootEngine();
@@ -425,8 +425,8 @@ const EditTool = {
             this.mode = btn.dataset.editmode;
             $$('[data-editmode]').forEach((b) => b.classList.toggle('active', b === btn));
             $('edit-hint').textContent =
-                this.mode === 'TEXT' ? 'Tap a highlighted line and type — you edit straight on the page.'
-              : this.mode === 'BLOCK' ? 'Tap a paragraph and rewrite it in place — the text rewraps to fit.'
+                this.mode === 'TEXT' ? 'Tap a highlighted line and type - you edit straight on the page.'
+              : this.mode === 'BLOCK' ? 'Tap a paragraph and rewrite it in place - the text rewraps to fit.'
               : `Drag across the page to add a ${this.mode} annotation.`;
             this.drawSpans();
         }));
@@ -445,7 +445,7 @@ const EditTool = {
             await UI.run('Updating bookmarks…', async () => {
                 const n = await engine.call('set_outline', this.view.docId,
                                             JSON.stringify(this.outline || []));
-                UI.toast(`${n} bookmark(s) applied — save to keep them`, 'success');
+                UI.toast(`${n} bookmark(s) applied - save to keep them`, 'success');
             });
         });
 
@@ -483,8 +483,8 @@ const EditTool = {
             el.style.cssText = `left:${item.xFrac * 100}%;top:${item.yFrac * 100}%;` +
                                `width:${item.wFrac * 100}%;height:${item.hFrac * 100}%`;
             el.title = isBlock
-                ? `Paragraph · ${item.lines} line(s) — tap to rewrite in place`
-                : `${item.font} ${item.size}pt — tap to edit in place`;
+                ? `Paragraph · ${item.lines} line(s) - tap to rewrite in place`
+                : `${item.font} ${item.size}pt - tap to edit in place`;
             el.addEventListener('click', (e) => this.beginEdit(index, el, e));
             overlay.appendChild(el);
         });
@@ -518,7 +518,7 @@ const EditTool = {
                          style: 'normal', exact: true };
             }
         } catch (err) {
-            console.warn('Embedded font unavailable — using a lookalike', err);
+            console.warn('Embedded font unavailable - using a lookalike', err);
         }
         this.fontCache.set(key, spec);
         return spec;
@@ -566,8 +566,8 @@ const EditTool = {
         tag.style.top = `${item.yFrac * 100}%`;
         tag.textContent = `${item.font} · ${item.size}pt`
             + (spec.exact ? '' : ' · lookalike')
-            + (isBlock ? ' — Ctrl+Enter to apply, Esc to cancel'
-                       : ' — Enter to apply, Esc to cancel');
+            + (isBlock ? ' - Ctrl+Enter to apply, Esc to cancel'
+                       : ' - Enter to apply, Esc to cancel');
 
         el.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') { e.preventDefault(); this.cancelEdit(); return; }
@@ -656,9 +656,9 @@ const EditTool = {
                 ? `kept ${item.font}`
                 : 'matched with a similar font';
             UI.toast(isBlock
-                ? (res.grew ? `Paragraph rewritten at ${res.size}pt, box grew to fit — ${face}`
-                            : `Paragraph rewrapped at ${res.size}pt — ${face}`)
-                : `Text replaced — ${face}`, 'success');
+                ? (res.grew ? `Paragraph rewritten at ${res.size}pt, box grew to fit - ${face}`
+                            : `Paragraph rewrapped at ${res.size}pt - ${face}`)
+                : `Text replaced - ${face}`, 'success');
         });
     },
 
@@ -733,7 +733,7 @@ const EditTool = {
         $('edit-annot-list').innerHTML = list.length
             ? `<h4 class="side-subtitle">Comments (${list.length})</h4>` + list.map((a) =>
                 `<div class="annot-item"><strong>${a.type}</strong> · p${a.page + 1}
-                 <div class="muted">${a.content || '—'}</div></div>`).join('')
+                 <div class="muted">${a.content || '-'}</div></div>`).join('')
             : '';
     },
 
@@ -750,7 +750,7 @@ const EditTool = {
 };
 
 /* ------------------------------------------------------------------ */
-/* 2. Pages — merge / split / organise                                 */
+/* 2. Pages - merge / split / organise                                 */
 /* ------------------------------------------------------------------ */
 
 const PagesTool = {
@@ -1097,7 +1097,7 @@ const SignTool = {
             this.tool = this.target;
             $$('[data-signtool]').forEach((b) => b.classList.toggle('active', b.dataset.signtool === this.target));
             $('sig-modal').classList.add('hidden');
-            UI.toast('Ready — click the page to place it', 'success');
+            UI.toast('Ready - click the page to place it', 'success');
         };
         img.src = dataUrl;
     },
@@ -1195,7 +1195,7 @@ const StampTool = {
                               $('wm-color').value, Number($('wm-opacity').value) / 100,
                               Number($('wm-rotate').value), $('wm-tiled').checked);
             await this.view.render();
-            UI.toast('Watermark applied — press Save to download', 'success');
+            UI.toast('Watermark applied - press Save to download', 'success');
         });
     },
 
@@ -1270,10 +1270,10 @@ const OcrTool = {
             $('ocr-workspace').classList.remove('hidden');
             $('ocr-save').disabled = true;
             $('ocr-summary').innerHTML =
-                `<strong>${file.name}</strong> — ${info.pages} page(s).<br>` +
+                `<strong>${file.name}</strong> - ${info.pages} page(s).<br>` +
                 (needs.length
                     ? `<span class="warn">${needs.length} page(s) look scanned and have no searchable text.</span>`
-                    : 'Every page already has extractable text — OCR is optional here.');
+                    : 'Every page already has extractable text - OCR is optional here.');
         });
     },
 
@@ -1331,7 +1331,7 @@ const OcrTool = {
                 done++;
                 setProgress(Math.round((done / targets.length) * 100));
             }
-            $('ocr-status').textContent = `Done — ${done} page(s) now carry a searchable text layer.`;
+            $('ocr-status').textContent = `Done - ${done} page(s) now carry a searchable text layer.`;
             $('ocr-save').disabled = false;
             UI.toast('OCR complete', 'success');
         } catch (err) {
@@ -1363,7 +1363,7 @@ const CompressTool = {
             $('compress-workspace').classList.remove('hidden');
             $('compress-result').classList.add('hidden');
             $('compress-summary').innerHTML =
-                `<strong>${file.name}</strong> — ${formatSize(file.size)} · ${info.pages} page(s)`;
+                `<strong>${file.name}</strong> - ${formatSize(file.size)} · ${info.pages} page(s)`;
         });
     },
 
@@ -1409,7 +1409,7 @@ const ProtectTool = {
             const info = await engine.callJSON('doc_info', 'protect');
             $('protect-workspace').classList.remove('hidden');
             $('protect-summary').innerHTML =
-                `<strong>${file.name}</strong> — ${info.pages} page(s) · ${formatSize(file.size)}`;
+                `<strong>${file.name}</strong> - ${info.pages} page(s) · ${formatSize(file.size)}`;
         });
     },
 
@@ -1421,7 +1421,7 @@ const ProtectTool = {
                                             $('perm-print').checked, $('perm-copy').checked,
                                             $('perm-modify').checked, $('perm-annot').checked);
             download(bytes, 'protected.pdf');
-            UI.toast('Encrypted — text stays searchable for anyone with the password', 'success');
+            UI.toast('Encrypted - text stays searchable for anyone with the password', 'success');
         });
     },
 
@@ -1527,7 +1527,7 @@ const RedactTool = {
             const n = await engine.call('redact_search', 'redact', term, '', $('redact-color').value);
             if (n) this.applied += n;
             await this.view.render();
-            UI.toast(n ? `Redacted ${n} occurrence(s) — content deleted from the file` : 'No matches found',
+            UI.toast(n ? `Redacted ${n} occurrence(s) - content deleted from the file` : 'No matches found',
                      n ? 'success' : 'error');
         });
     },
@@ -1547,7 +1547,7 @@ const RedactTool = {
             this.applied = 0;
             await this.view.render();
             await this.view.save('redacted.pdf');
-            UI.toast('Redactions applied — the covered content is gone from the file', 'success');
+            UI.toast('Redactions applied - the covered content is gone from the file', 'success');
         });
     },
 };
@@ -1581,7 +1581,7 @@ const ExportTool = {
         await UI.run('Opening document…', async () => {
             const info = await engine.callJSON('open_doc', 'export', await fileToBytes(file));
             $('export-workspace').classList.remove('hidden');
-            $('export-summary').innerHTML = `<strong>${file.name}</strong> — ${info.pages} page(s)`;
+            $('export-summary').innerHTML = `<strong>${file.name}</strong> - ${info.pages} page(s)`;
         });
     },
 
@@ -1741,7 +1741,7 @@ const ScanTool = {
             $('scan-workspace').classList.remove('hidden');
             $('scan-results').innerHTML = '';
             $('scan-actions').classList.add('hidden');
-            $('scan-summary').innerHTML = `<strong>${file.name}</strong> — ${info.pages} page(s)`;
+            $('scan-summary').innerHTML = `<strong>${file.name}</strong> - ${info.pages} page(s)`;
         });
     },
 
@@ -1809,7 +1809,7 @@ const InspectTool = {
 
             const c = res.counts;
             $('inspect-counts').innerHTML =
-                `<strong>${file.name}</strong> — ${res.pages} page(s) · ` +
+                `<strong>${file.name}</strong> - ${res.pages} page(s) · ` +
                 `<span class="lvl lvl--risk">${c.risk || 0} risk</span> ` +
                 `<span class="lvl lvl--warn">${c.warn || 0} to review</span> ` +
                 `<span class="lvl lvl--info">${c.info || 0} informational</span>`;
@@ -1820,7 +1820,7 @@ const InspectTool = {
                         <span class="finding__area">${f.area}</span>
                         <span class="finding__detail">${String(f.detail).replace(/[<>]/g, '')}</span>
                     </div>`).join('')
-                : '<div class="result-box">Nothing hidden was found — this document is clean.</div>';
+                : '<div class="result-box">Nothing hidden was found - this document is clean.</div>';
         });
     },
 
@@ -1859,7 +1859,7 @@ const ReplaceTool = {
             const info = await engine.callJSON('open_doc', 'replace', await fileToBytes(file));
             $('replace-workspace').classList.remove('hidden');
             $('replace-result').classList.add('hidden');
-            $('replace-summary').innerHTML = `<strong>${file.name}</strong> — ${info.pages} page(s)`;
+            $('replace-summary').innerHTML = `<strong>${file.name}</strong> - ${info.pages} page(s)`;
         });
     },
 
@@ -1915,7 +1915,7 @@ const AutoSplitTool = {
             $('autosplit-workspace').classList.remove('hidden');
             $('autosplit-result').innerHTML = '';
             $('autosplit-run').disabled = true;
-            $('autosplit-summary').innerHTML = `<strong>${file.name}</strong> — ${info.pages} page(s)`;
+            $('autosplit-summary').innerHTML = `<strong>${file.name}</strong> - ${info.pages} page(s)`;
         });
     },
 
@@ -1970,7 +1970,7 @@ const AutoSplitTool = {
 // One manifest drives the home cards, so adding a tool means editing one place.
 const TOOL_CARDS = [
     { group: 'Edit', tab: 'edit', icon: '📝', name: 'Edit Text',
-      blurb: 'Rewrite text for real — line by line or a whole paragraph with reflow.' },
+      blurb: 'Rewrite text for real - line by line or a whole paragraph with reflow.' },
     { group: 'Edit', tab: 'sign', icon: '🖊️', name: 'Fill & Sign',
       blurb: 'Draw or type a signature, add dates and checks, fill form fields.' },
     { group: 'Edit', tab: 'stamp', icon: '💧', name: 'Watermark & Stamps',
@@ -1988,9 +1988,9 @@ const TOOL_CARDS = [
       blurb: 'Shrink the file while text stays real, searchable text.' },
 
     { group: 'Protect', tab: 'scan', icon: '🛡️', name: 'Find Sensitive Data',
-      blurb: 'Detect PAN, GSTIN, Aadhaar, cards and more — then redact them.', badge: 'New' },
+      blurb: 'Detect PAN, GSTIN, Aadhaar, cards and more - then redact them.', badge: 'New' },
     { group: 'Protect', tab: 'inspect', icon: '🕵️', name: 'Inspect & Sanitize',
-      blurb: 'See what hides in a PDF — metadata, scripts, attachments — and strip it.', badge: 'New' },
+      blurb: 'See what hides in a PDF - metadata, scripts, attachments - and strip it.', badge: 'New' },
     { group: 'Protect', tab: 'redact', icon: '⬛', name: 'Redact',
       blurb: 'Black out content so it is deleted from the file, not just covered.' },
     { group: 'Protect', tab: 'protect', icon: '🔒', name: 'Password Protect',
@@ -2039,7 +2039,7 @@ const Tools = [EditTool, PagesTool, SignTool, StampTool, OcrTool,
                CompressTool, ProtectTool, RedactTool, ExportTool, CompareTool,
                ScanTool, InspectTool, ReplaceTool, AutoSplitTool, Dashboard];
 
-// Start fetching the engine immediately — this file is loaded at the end of
+// Start fetching the engine immediately - this file is loaded at the end of
 // <body>, so the download overlaps with DOM construction instead of queueing
 // behind it. Errors are handled when the UI attaches its progress display.
 engine.boot().catch(() => {});

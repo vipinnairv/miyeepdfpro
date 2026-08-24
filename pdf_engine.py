@@ -22,7 +22,7 @@ _DOCS = {}
 
 # Base-14 fonts we can always embed. Real documents reference fonts we cannot
 # re-embed from the browser, so editing falls back to the closest of these.
-# Each family lists (regular, bold, italic, bold-italic) — PyMuPDF uses fixed
+# Each family lists (regular, bold, italic, bold-italic) - PyMuPDF uses fixed
 # four-letter names, so these cannot be built by concatenating a suffix.
 _FONT_FAMILIES = {
     "helv": ("helv", "hebo", "heit", "hebi"),
@@ -114,7 +114,7 @@ def _fit_size(text, font, size, width, measurer=None):
 
 
 # Suffixes that say nothing about the face itself. A PDF's BaseFont entry and
-# the name text extraction reports disagree about these constantly — the same
+# the name text extraction reports disagree about these constantly - the same
 # font turns up as "IPAGothic Regular" in one and "IPAGothic" in the other, or
 # as "TimesNewRomanPSMT" against "TimesNewRoman".
 _NEUTRAL_FONT_SUFFIXES = ("regular", "roman", "normal", "book", "std", "pro", "mt", "ps")
@@ -146,7 +146,7 @@ def _same_font(a, b):
 def _grab_embedded_font(doc, page, font_name, text):
     """Pull the document's *own* font file out of the PDF, if it can be reused.
 
-    Real documents use fonts that do not map onto the base-14 set — a Roboto
+    Real documents use fonts that do not map onto the base-14 set - a Roboto
     invoice rewritten in Helvetica looks obviously edited. When the font is
     embedded we can extract the actual file and write with it.
 
@@ -170,7 +170,7 @@ def _grab_embedded_font(doc, page, font_name, text):
         except Exception:
             continue
         if not buf:
-            continue  # referenced, not embedded — nothing to reuse
+            continue  # referenced, not embedded - nothing to reuse
         try:
             fnt = pymupdf.Font(fontbuffer=buf)
             if any(not fnt.has_glyph(ord(c)) for c in needed):
@@ -339,7 +339,7 @@ def edit_text(doc_id, pno, bbox, new_text, font_name="", size=0, color_int=0, fl
     x0, y0, x1, y1 = [float(v) for v in bbox]
     rect = pymupdf.Rect(x0, y0, x1, y1)
 
-    # Grab the embedded font while the page still references it — redaction can
+    # Grab the embedded font while the page still references it - redaction can
     # drop the resource.
     buf, _ = _grab_embedded_font(doc, page, font_name, new_text)
 
@@ -388,7 +388,7 @@ def redact(doc_id, marks_json, remove_images=False, fill="#000000"):
 
     Unlike drawing a black box, the underlying text and image data are struck
     from the file, so the result cannot be recovered by copy/paste. `fill` only
-    changes the colour of the box left behind — never what gets removed.
+    changes the colour of the box left behind - never what gets removed.
     """
     doc = _doc(doc_id)
     marks = json.loads(marks_json) if isinstance(marks_json, str) else marks_json
@@ -430,7 +430,7 @@ def redact_search(doc_id, needle, pages_spec="", fill="#000000"):
 
 def encrypt(doc_id, user_pw, owner_pw="", allow_print=True, allow_copy=False,
             allow_modify=False, allow_annotate=False):
-    """AES-256 encrypt the document itself — pages are never rasterised."""
+    """AES-256 encrypt the document itself - pages are never rasterised."""
     doc = _doc(doc_id)
     perms = 0
     if allow_print:
@@ -690,7 +690,7 @@ def page_numbers(doc_id, fmt="Page {n} of {total}", position="bottom-center",
 
 def bates(doc_id, prefix="", suffix="", start=1, digits=6, position="bottom-right",
           size=10, color="#111111", margin=28):
-    """Bates numbering — sequential legal stamps like BATES000001."""
+    """Bates numbering - sequential legal stamps like BATES000001."""
     doc = _doc(doc_id)
     rgb = _hex_to_rgb(color)
     font = pymupdf.Font("helv")
@@ -812,7 +812,7 @@ def get_form_fields(doc_id):
 
 
 # --------------------------------------------------------------------------
-# OCR — build a genuinely searchable PDF
+# OCR - build a genuinely searchable PDF
 # --------------------------------------------------------------------------
 
 def needs_ocr(doc_id, pno):
@@ -1370,7 +1370,7 @@ _VERHOEFF_P = (
 
 
 def _luhn_ok(digits):
-    """Standard card checksum — rejects most random digit runs."""
+    """Standard card checksum - rejects most random digit runs."""
     total, alt = 0, False
     for ch in reversed(digits):
         n = int(ch)
@@ -1508,7 +1508,7 @@ def redact_hits(doc_id, hits_json, fill="#000000"):
 def inspect(doc_id):
     """Report what a PDF carries beyond its visible pages.
 
-    Answers the practical question "is this safe to send outside?" — author
+    Answers the practical question "is this safe to send outside?" - author
     names, revision tooling, attachments, scripts, hidden layers and off-page
     annotations all travel with a file and are easy to forget.
     """
@@ -1704,7 +1704,7 @@ def find_replace(doc_id, needle, replacement, pages_spec=""):
         if not hits:
             continue
 
-        # Capture styling — and the document's own font — before redaction
+        # Capture styling - and the document's own font - before redaction
         # destroys the spans that reference them.
         styled = []
         for rect in hits:
