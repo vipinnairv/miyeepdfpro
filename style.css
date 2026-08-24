@@ -582,7 +582,7 @@ body {
   height: 34px;
   display: block;
   /* Nudge down so the mark sits on the wordmark's optical centre, not its
-     baseline — the title's flex uses `align-items: baseline`. */
+     baseline - the title's flex uses `align-items: baseline`. */
   align-self: center;
   flex: none;
 }
@@ -1579,7 +1579,7 @@ body {
 }
 
 /* ==========================================================================
-   Engine boot banner — non-blocking, so the app stays usable while it loads
+   Engine boot banner - non-blocking, so the app stays usable while it loads
    ========================================================================== */
 
 .engine-banner {

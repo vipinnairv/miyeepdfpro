@@ -20,7 +20,7 @@
 
     <!-- ?v= busts the browser cache on redeploy: without it a stale app.js/style.css
          pair silently breaks the page. Bump APP_VERSION in app.js to match. -->
-    <link rel="stylesheet" href="style.css?v=4.7.0">
+    <link rel="stylesheet" href="style.css?v=4.7.1">
     <script src="https://cdn.jsdelivr.net/pyodide/v314.0.5/full/pyodide.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
@@ -78,7 +78,7 @@
             <div class="engine-banner__row">
                 <div class="engine-banner__spinner"></div>
                 <div class="engine-banner__text">
-                    <strong>Setting up — you can browse while this finishes.</strong>
+                    <strong>Setting up - you can browse while this finishes.</strong>
                     <span id="engine-loading-step">Getting things ready…</span>
                 </div>
                 <span class="engine-banner__note">One-time download, then cached. Files never leave your device.</span>
@@ -103,7 +103,7 @@
         <div class="tab-content" id="edit-tab">
             <div class="tool-header">
                 <h2>Edit Text &amp; Annotate</h2>
-                <p>Click any text to edit it for real — the original glyphs are replaced in the PDF, not covered up</p>
+                <p>Click any text to edit it for real - the original glyphs are replaced in the PDF, not covered up</p>
             </div>
             <div class="file-drop-zone" data-drop="edit">
                 <p>Drop a PDF here or click to select</p>
@@ -132,7 +132,7 @@
                             <label class="tool-option">Colour <input type="color" id="edit-annot-color" value="#ffd400"></label>
                         </div>
                     </div>
-                    <p class="hint" id="edit-hint">Tap any highlighted text and type — you edit straight on the page, in the page&#39;s own font. Switch modes above to annotate instead.</p>
+                    <p class="hint" id="edit-hint">Tap any highlighted text and type - you edit straight on the page, in the page&#39;s own font. Switch modes above to annotate instead.</p>
                     <div class="page-holder" id="edit-holder">
                         <img class="page-image" id="edit-page-img" alt="PDF page">
                         <div class="overlay" id="edit-overlay"></div>
@@ -182,7 +182,7 @@
         <div class="tab-content" id="pages-tab">
             <div class="tool-header">
                 <h2>Organize Pages</h2>
-                <p>Reorder, rotate, delete, merge and split — without ever degrading quality</p>
+                <p>Reorder, rotate, delete, merge and split - without ever degrading quality</p>
             </div>
             <div class="file-drop-zone" data-drop="pages">
                 <p>Drop one or more PDFs here (multiple files will be merged in order)</p>
@@ -204,7 +204,7 @@
                     <div class="tool-group">
                         <label class="tool-option">Split
                             <select id="pages-split-mode" class="form-control form-control--inline">
-                                <option value="">— none —</option>
+                                <option value="">None</option>
                                 <option value="individual">Every page separately</option>
                                 <option value="every">Every N pages</option>
                                 <option value="ranges">By ranges</option>
@@ -226,7 +226,7 @@
         <div class="tab-content" id="sign-tab">
             <div class="tool-header">
                 <h2>Fill &amp; Sign</h2>
-                <p>Sign, initial, date and check — plus real AcroForm field filling</p>
+                <p>Sign, initial, date and check - plus real AcroForm field filling</p>
             </div>
             <div class="file-drop-zone" data-drop="sign">
                 <p>Drop a PDF here or click to select</p>
@@ -418,7 +418,7 @@
         <!-- =============================== OCR ============================== -->
         <div class="tab-content" id="ocr-tab">
             <div class="tool-header">
-                <h2>OCR — Make Scanned PDFs Searchable</h2>
+                <h2>OCR - Make Scanned PDFs Searchable</h2>
                 <p>Recognised text is written back as a real invisible text layer, so the PDF becomes searchable and selectable</p>
             </div>
             <div class="file-drop-zone" data-drop="ocr">
@@ -463,7 +463,7 @@
         <div class="tab-content" id="compress-tab">
             <div class="tool-header">
                 <h2>Compress PDF</h2>
-                <p>Recompresses images and cleans the file — your text stays real vector text, still searchable</p>
+                <p>Recompresses images and cleans the file - your text stays real vector text, still searchable</p>
             </div>
             <div class="file-drop-zone" data-drop="compress">
                 <p>Drop a PDF here or click to select</p>
@@ -475,9 +475,9 @@
                 <div class="form-group">
                     <label class="form-label">Compression level</label>
                     <select id="compress-level" class="form-control">
-                        <option value="low">Low — best quality</option>
-                        <option value="medium" selected>Medium — balanced</option>
-                        <option value="high">High — smallest file</option>
+                        <option value="low">Low - best quality</option>
+                        <option value="medium" selected>Medium - balanced</option>
+                        <option value="high">High - smallest file</option>
                     </select>
                 </div>
                 <div class="action-buttons"><button class="btn btn--primary" id="compress-run">Compress</button></div>
@@ -489,7 +489,7 @@
         <div class="tab-content" id="protect-tab">
             <div class="tool-header">
                 <h2>Protect with a Password</h2>
-                <p>Real AES-256 encryption applied to the document itself — pages are never flattened to images</p>
+                <p>Real AES-256 encryption applied to the document itself - pages are never flattened to images</p>
             </div>
             <div class="file-drop-zone" data-drop="protect">
                 <p>Drop a PDF here or click to select</p>
@@ -503,7 +503,7 @@
                     <input type="password" id="protect-user-pw" class="form-control" placeholder="Enter a password">
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Owner password (optional — controls permissions)</label>
+                    <label class="form-label">Owner password (optional - controls permissions)</label>
                     <input type="password" id="protect-owner-pw" class="form-control" placeholder="Defaults to the open password">
                 </div>
                 <div class="form-group">
@@ -526,7 +526,7 @@
         <div class="tab-content" id="redact-tab">
             <div class="tool-header">
                 <h2>Redact</h2>
-                <p>Content under a redaction is deleted from the file — not just painted over. The rest of the page stays vector.</p>
+                <p>Content under a redaction is deleted from the file - not just painted over. The rest of the page stays vector.</p>
             </div>
             <div class="file-drop-zone" data-drop="redact">
                 <p>Drop a PDF here or click to select</p>
@@ -565,7 +565,7 @@
                             <button class="btn btn--sm btn--full-width" id="redact-search">Mark &amp; redact all matches</button>
                         </div>
                         <label class="checkbox-row"><input type="checkbox" id="redact-images"> Also remove images touched by a redaction</label>
-                        <p class="hint hint--inline">The colour only changes the box left behind — the content underneath is always destroyed.</p>
+                        <p class="hint hint--inline">The colour only changes the box left behind - the content underneath is always destroyed.</p>
                         <div id="redact-count" class="muted"></div>
                     </div>
                     <div class="side-footer">
@@ -579,7 +579,7 @@
         <div class="tab-content" id="scan-tab">
             <div class="tool-header">
                 <h2>Find Sensitive Data</h2>
-                <p>Scans the whole document for identifiers people forget are in there — then removes the ones you choose, permanently</p>
+                <p>Scans the whole document for identifiers people forget are in there - then removes the ones you choose, permanently</p>
             </div>
             <div class="file-drop-zone" data-drop="scan">
                 <p>Drop a PDF here or click to select</p>
@@ -619,7 +619,7 @@
         <div class="tab-content" id="inspect-tab">
             <div class="tool-header">
                 <h2>Inspect &amp; Sanitize</h2>
-                <p>Shows what travels with a PDF beyond its visible pages — author names, attachments, scripts, hidden layers — then strips it</p>
+                <p>Shows what travels with a PDF beyond its visible pages - author names, attachments, scripts, hidden layers - then strips it</p>
             </div>
             <div class="file-drop-zone" data-drop="inspect">
                 <p>Drop a PDF here or click to select</p>
@@ -650,7 +650,7 @@
         <div class="tab-content" id="replace-tab">
             <div class="tool-header">
                 <h2>Find &amp; Replace</h2>
-                <p>Real search-and-replace inside a PDF — each replacement takes on the font, size and colour of the text it replaces</p>
+                <p>Real search-and-replace inside a PDF - each replacement takes on the font, size and colour of the text it replaces</p>
             </div>
             <div class="file-drop-zone" data-drop="replace">
                 <p>Drop a PDF here or click to select</p>
@@ -685,7 +685,7 @@
         <div class="tab-content" id="autosplit-tab">
             <div class="tool-header">
                 <h2>Auto-Split by Content</h2>
-                <p>Cuts a combined bundle wherever a marker appears — each invoice or statement becomes its own file, named from the text itself</p>
+                <p>Cuts a combined bundle wherever a marker appears - each invoice or statement becomes its own file, named from the text itself</p>
             </div>
             <div class="file-drop-zone" data-drop="autosplit">
                 <p>Drop a combined PDF here or click to select</p>
@@ -848,6 +848,6 @@
         </div>
     </footer>
 
-    <script src="app.js?v=4.7.0"></script>
+    <script src="app.js?v=4.7.1"></script>
 </body>
 </html>
