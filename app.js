@@ -11,7 +11,7 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.6.0';
+const APP_VERSION = '4.7.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -1561,9 +1561,18 @@ const ExportTool = {
         $('export-file').addEventListener('change', (e) => this.open(e.target.files[0]));
         $('export-doc').addEventListener('click', () => this.doc());
         $('export-text').addEventListener('click', () => this.text());
+        $('export-tables-xlsx').addEventListener('click', () => this.tablesXlsx());
         $('export-tables').addEventListener('click', () => this.tables());
         $('export-images').addEventListener('click', () => this.images());
         $('export-pages').addEventListener('click', () => this.pageImages());
+        $('export-fmt').addEventListener('change', (e) => {
+            const isJpeg = e.target.value === 'jpeg';
+            $('export-quality-row').classList.toggle('hidden', !isJpeg);
+            $('export-pages-label').textContent = `Pages → ${isJpeg ? 'JPEG' : 'PNG'}`;
+        });
+        $('export-quality').addEventListener('input', (e) => {
+            $('export-quality-value').textContent = e.target.value;
+        });
     },
 
     async open(file) {
@@ -1599,10 +1608,21 @@ const ExportTool = {
         });
     },
 
+    async tablesXlsx() {
+        await UI.run('Detecting tables…', async () => {
+            const result = await engine.callJSON('export_tables_xlsx', 'export');
+            if (!result.ok) return this.result(result.reason);
+            const mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+            download(b64ToBytes(result.b64), `${this.name}-tables.xlsx`, mime);
+            this.result(`Built one Excel workbook with <strong>${result.sheets.length}</strong> sheet(s): ` +
+                        result.sheets.map((s) => `${s.name} (${s.rows}×${s.cols})`).join(', '));
+        });
+    },
+
     async tables() {
         await UI.run('Detecting tables…', async () => {
             const tables = await engine.callJSON('export_tables', 'export');
-            if (!tables.length) return this.result('No ruled tables were detected in this PDF.');
+            if (!tables.length) return this.result('No tables were detected in this PDF.');
             const zip = new JSZip();
             tables.forEach((t) => zip.file(t.name, t.csv));
             download(await zip.generateAsync({ type: 'blob' }), `${this.name}-tables.zip`, 'application/zip');
@@ -1624,13 +1644,15 @@ const ExportTool = {
 
     async pageImages() {
         await UI.run('Rendering pages…', async () => {
+            const fmt = $('export-fmt').value;
             const pages = await engine.callJSON('export_page_images', 'export',
-                                                Number($('export-dpi').value || 150), 'png',
-                                                $('export-pages-spec').value);
+                                                Number($('export-dpi').value || 150), fmt,
+                                                $('export-pages-spec').value,
+                                                Number($('export-quality').value || 90));
             const zip = new JSZip();
             pages.forEach((p) => zip.file(p.name, b64ToBytes(p.b64)));
             download(await zip.generateAsync({ type: 'blob' }), `${this.name}-pages.zip`, 'application/zip');
-            this.result(`Rendered <strong>${pages.length}</strong> page image(s).`);
+            this.result(`Rendered <strong>${pages.length}</strong> ${fmt === 'jpeg' ? 'JPEG' : 'PNG'} page image(s).`);
         });
     },
 };

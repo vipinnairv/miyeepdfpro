@@ -20,7 +20,7 @@
 
     <!-- ?v= busts the browser cache on redeploy: without it a stale app.js/style.css
          pair silently breaks the page. Bump APP_VERSION in app.js to match. -->
-    <link rel="stylesheet" href="style.css?v=4.6.0">
+    <link rel="stylesheet" href="style.css?v=4.7.0">
     <script src="https://cdn.jsdelivr.net/pyodide/v314.0.5/full/pyodide.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
@@ -732,24 +732,39 @@
                         <span class="export-icon">📝</span><strong>Plain text</strong>
                         <small>All text content as .txt</small>
                     </button>
+                    <button class="export-card" id="export-tables-xlsx">
+                        <span class="export-icon">📗</span><strong>Tables → Excel</strong>
+                        <small>One formatted .xlsx workbook, a sheet per table</small>
+                    </button>
                     <button class="export-card" id="export-tables">
                         <span class="export-icon">📊</span><strong>Tables → CSV</strong>
-                        <small>Detects ruled tables, one CSV each</small>
+                        <small>Same tables, one plain CSV each</small>
                     </button>
                     <button class="export-card" id="export-images">
                         <span class="export-icon">🖼️</span><strong>Embedded images</strong>
                         <small>Extracts original images at full quality</small>
                     </button>
                     <button class="export-card" id="export-pages">
-                        <span class="export-icon">🏞️</span><strong>Pages → PNG</strong>
+                        <span class="export-icon">🏞️</span><strong id="export-pages-label">Pages → PNG</strong>
                         <small>Render each page as an image</small>
                     </button>
                 </div>
                 <div class="form-row">
+                    <div class="form-group"><label class="form-label">Image format</label>
+                        <select id="export-fmt" class="form-control">
+                            <option value="png">PNG (lossless)</option>
+                            <option value="jpeg">JPEG (smaller file)</option>
+                        </select></div>
                     <div class="form-group"><label class="form-label">Image DPI</label>
                         <input type="number" id="export-dpi" class="form-control" value="150" min="36" max="600"></div>
                     <div class="form-group"><label class="form-label">Pages (blank = all)</label>
                         <input type="text" id="export-pages-spec" class="form-control" placeholder="1-3, 5"></div>
+                </div>
+                <div class="form-row hidden" id="export-quality-row">
+                    <div class="form-group">
+                        <label class="form-label">JPEG quality (<span id="export-quality-value">90</span>)</label>
+                        <input type="range" id="export-quality" min="10" max="100" value="90" step="5">
+                    </div>
                 </div>
                 <div id="export-result" class="result-box hidden"></div>
             </div>
@@ -833,6 +848,6 @@
         </div>
     </footer>
 
-    <script src="app.js?v=4.6.0"></script>
+    <script src="app.js?v=4.7.0"></script>
 </body>
 </html>
