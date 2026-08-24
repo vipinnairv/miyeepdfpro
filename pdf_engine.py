@@ -852,6 +852,235 @@ def insert_ocr_layer(doc_id, pno, words_json, img_width, img_height):
 # export & convert
 # --------------------------------------------------------------------------
 
+def _xlsx_col(idx):
+    """0-based column index -> Excel column letters (0 -> A, 26 -> AA)."""
+    s = ""
+    idx += 1
+    while idx:
+        idx, rem = divmod(idx - 1, 26)
+        s = chr(65 + rem) + s
+    return s
+
+
+def _xlsx_cell_value(raw):
+    """Classify a table cell as numeric or text for xlsx export.
+
+    Deliberately conservative: a value like "0123" or "00501" (an id or a
+    postal code, not a quantity) is kept as text, because turning it into a
+    real number would silently drop the leading zero -- a wrong-but-plausible
+    number is worse than an unformatted string.
+    """
+    import re
+    text = "" if raw is None else str(raw).replace("\r", " ").replace("\n", " ").strip()
+    if not text:
+        return False, text, None
+    if not re.fullmatch(r"-?\d{1,3}(?:,\d{3})*(?:\.\d+)?|-?\d+(?:\.\d+)?", text):
+        return False, text, None
+    bare = text.replace(",", "")
+    digits = bare.lstrip("-")
+    if len(digits) > 1 and digits[0] == "0" and digits[1] != ".":
+        return False, text, None
+    return True, text, bare
+
+
+_XLSX_STYLES_XML = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<fonts count="2">
+<font><sz val="11"/><color rgb="FF1F2427"/><name val="Calibri"/></font>
+<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>
+</fonts>
+<fills count="4">
+<fill><patternFill patternType="none"/></fill>
+<fill><patternFill patternType="gray125"/></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FF21808D"/><bgColor indexed="64"/></patternFill></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FFF3F6F6"/><bgColor indexed="64"/></patternFill></fill>
+</fills>
+<borders count="2">
+<border><left/><right/><top/><bottom/><diagonal/></border>
+<border><left style="thin"><color rgb="FFD8DEE2"/></left><right style="thin"><color rgb="FFD8DEE2"/></right><top style="thin"><color rgb="FFD8DEE2"/></top><bottom style="thin"><color rgb="FFD8DEE2"/></bottom><diagonal/></border>
+</borders>
+<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+<cellXfs count="6">
+<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1"/>
+<xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1"/>
+<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="right"/></xf>
+<xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right"/></xf>
+</cellXfs>
+<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+</styleSheet>"""
+
+
+def _build_xlsx(sheets, creator="MiyeePDF"):
+    """Build a genuine .xlsx workbook, one worksheet per entry in `sheets`.
+
+    sheets: [{"name": str, "rows": [[cell, ...], ...]}], first row of each
+    treated as its header. Pure stdlib (zipfile) so the wasm bundle needs no
+    extra vendored package for something a zip of XML files can do on its
+    own -- openpyxl and its dependency are not part of the Pyodide package
+    set, and PyPI wheels can't be fetched cross-origin from the browser
+    (same reason PyMuPDF itself is vendored rather than pip-installed).
+    Returns bytes.
+    """
+    import re
+    import zipfile
+
+    def esc(s):
+        return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                .replace('"', "&quot;"))
+
+    shared = []
+    shared_index = {}
+
+    def sst(text):
+        if text not in shared_index:
+            shared_index[text] = len(shared)
+            shared.append(text)
+        return shared_index[text]
+
+    sheet_xmls = []
+    sheet_names = []
+    used_names = set()
+    for sheet in sheets:
+        name = re.sub(r'[\[\]\*\?/\\:]', ' ', sheet["name"]).strip()[:31] or "Sheet"
+        base, n = name, 2
+        while name.lower() in used_names:
+            suffix = f" ({n})"
+            name = base[:31 - len(suffix)] + suffix
+            n += 1
+        used_names.add(name.lower())
+        sheet_names.append(name)
+
+        rows = sheet["rows"] or [[]]
+        ncols = max((len(r) for r in rows), default=1) or 1
+        widths = [8.0] * ncols
+        row_xml = []
+        for r_idx, row in enumerate(rows):
+            is_header = r_idx == 0
+            cells_xml = []
+            for c_idx in range(ncols):
+                raw = row[c_idx] if c_idx < len(row) else ""
+                is_num, text, num_str = _xlsx_cell_value(raw)
+                widths[c_idx] = min(max(widths[c_idx], len(text) + 2), 60)
+                ref = f"{_xlsx_col(c_idx)}{r_idx + 1}"
+                if is_header:
+                    style = 1
+                elif is_num:
+                    style = 5 if r_idx % 2 else 4
+                else:
+                    style = 3 if r_idx % 2 else 2
+                if is_num and not is_header:
+                    cells_xml.append(f'<c r="{ref}" s="{style}"><v>{num_str}</v></c>')
+                else:
+                    idx = sst(text)
+                    cells_xml.append(f'<c r="{ref}" t="s" s="{style}"><v>{idx}</v></c>')
+            row_xml.append(f'<row r="{r_idx + 1}">' + "".join(cells_xml) + "</row>")
+
+        cols_xml = "".join(
+            f'<col min="{i + 1}" max="{i + 1}" width="{w:.2f}" customWidth="1"/>'
+            for i, w in enumerate(widths)
+        )
+        dim_ref = f"A1:{_xlsx_col(ncols - 1)}{len(rows)}"
+        sheet_xmls.append(
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            f'<dimension ref="{dim_ref}"/>'
+            '<sheetViews><sheetView workbookViewId="0">'
+            '<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>'
+            '</sheetView></sheetViews>'
+            f'<cols>{cols_xml}</cols>'
+            f'<sheetData>{"".join(row_xml)}</sheetData>'
+            '</worksheet>'
+        )
+
+    content_types = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+        '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+        '<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>'
+        + "".join(
+            f'<Override PartName="/xl/worksheets/sheet{i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+            for i in range(len(sheet_xmls))
+        )
+        + '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>'
+        + '<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>'
+        + '</Types>'
+    )
+
+    root_rels = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+        '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>'
+        '<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>'
+        '</Relationships>'
+    )
+
+    workbook_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<sheets>'
+        + "".join(
+            f'<sheet name="{esc(n)}" sheetId="{i + 1}" r:id="rId{i + 1}"/>'
+            for i, n in enumerate(sheet_names)
+        )
+        + '</sheets></workbook>'
+    )
+
+    workbook_rels = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        + "".join(
+            f'<Relationship Id="rId{i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet{i + 1}.xml"/>'
+            for i in range(len(sheet_xmls))
+        )
+        + f'<Relationship Id="rId{len(sheet_xmls) + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
+        + f'<Relationship Id="rId{len(sheet_xmls) + 2}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>'
+        + '</Relationships>'
+    )
+
+    shared_strings_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="{len(shared)}" uniqueCount="{len(shared)}">'
+        + "".join(f'<si><t xml:space="preserve">{esc(t)}</t></si>' for t in shared)
+        + '</sst>'
+    )
+
+    core_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" '
+        'xmlns:dc="http://purl.org/dc/elements/1.1/">'
+        f'<dc:creator>{esc(creator)}</dc:creator>'
+        f'<dc:title>{esc(sheet_names[0] if sheet_names else "Export")}</dc:title>'
+        '</cp:coreProperties>'
+    )
+    app_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties">'
+        f'<Application>{esc(creator)}</Application>'
+        '</Properties>'
+    )
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", content_types)
+        z.writestr("_rels/.rels", root_rels)
+        z.writestr("xl/workbook.xml", workbook_xml)
+        z.writestr("xl/_rels/workbook.xml.rels", workbook_rels)
+        z.writestr("xl/styles.xml", _XLSX_STYLES_XML)
+        z.writestr("xl/sharedStrings.xml", shared_strings_xml)
+        for i, sx in enumerate(sheet_xmls):
+            z.writestr(f"xl/worksheets/sheet{i + 1}.xml", sx)
+        z.writestr("docProps/core.xml", core_xml)
+        z.writestr("docProps/app.xml", app_xml)
+    return buf.getvalue()
+
+
 def export_text(doc_id):
     return "\n\n".join(page.get_text() for page in _doc(doc_id))
 
@@ -870,17 +1099,40 @@ def export_html(doc_id):
     )
 
 
+def _find_page_tables(page):
+    """Detect tables on a page: ruled borders first, then column alignment.
+
+    Most PDFs export from Word/Excel/accounting software draw no ruling lines
+    at all -- the "table" is just text lined up in columns -- so a
+    ruled-only detector misses almost everything. Falling back to the
+    text-alignment strategy only when ruled detection finds nothing keeps
+    the common (ruled) case exact while still catching those.
+    """
+    try:
+        found = list(page.find_tables().tables)
+    except Exception:
+        found = []
+    if found:
+        return found
+    try:
+        found = list(page.find_tables(
+            vertical_strategy="text", horizontal_strategy="text",
+        ).tables)
+    except Exception:
+        found = []
+    return found
+
+
 def export_tables(doc_id):
-    """Detect ruled tables and return them as CSV files."""
+    """Detect tables and return them as CSV files."""
     doc = _doc(doc_id)
     out = []
     for pno, page in enumerate(doc):
-        try:
-            found = page.find_tables()
-        except Exception:
-            continue
-        for tno, table in enumerate(found.tables, 1):
-            rows = table.extract()
+        for tno, table in enumerate(_find_page_tables(page), 1):
+            try:
+                rows = table.extract()
+            except Exception:
+                continue
             if not rows:
                 continue
             buf = io.StringIO()
@@ -894,6 +1146,33 @@ def export_tables(doc_id):
                 "csv": buf.getvalue(),
             })
     return json.dumps(out)
+
+
+def export_tables_xlsx(doc_id):
+    """Detect tables and return them as one real .xlsx workbook, one sheet
+    per table -- formatted (bold header, borders, banded rows, auto-fit
+    columns, frozen header) rather than a bare grid of values."""
+    doc = _doc(doc_id)
+    sheets = []
+    for pno, page in enumerate(doc):
+        for tno, table in enumerate(_find_page_tables(page), 1):
+            try:
+                rows = table.extract()
+            except Exception:
+                continue
+            if not rows:
+                continue
+            clean = [["" if c is None else str(c).replace("\n", " ") for c in row] for row in rows]
+            sheets.append({"name": f"Page {pno + 1} Table {tno}", "rows": clean})
+    if not sheets:
+        return json.dumps({"ok": False, "reason": "No tables were detected in this PDF."})
+    data = _build_xlsx(sheets, creator="MiyeePDF")
+    return json.dumps({
+        "ok": True,
+        "b64": base64.b64encode(data).decode(),
+        "sheets": [{"name": s["name"], "rows": len(s["rows"]),
+                    "cols": len(s["rows"][0]) if s["rows"] else 0} for s in sheets],
+    })
 
 
 def export_images(doc_id):
@@ -920,8 +1199,8 @@ def export_images(doc_id):
     return json.dumps(out)
 
 
-def export_page_images(doc_id, dpi=150, fmt="png", pages_spec=""):
-    """Render pages to PNG/JPEG at a chosen resolution."""
+def export_page_images(doc_id, dpi=150, fmt="png", pages_spec="", quality=90):
+    """Render pages to PNG/JPEG at a chosen resolution (and JPEG quality)."""
     doc = _doc(doc_id)
     out = []
     for pno in _page_indices(doc, pages_spec):
@@ -930,7 +1209,7 @@ def export_page_images(doc_id, dpi=150, fmt="png", pages_spec=""):
             pix = pymupdf.Pixmap(pix, 0)
         out.append({
             "name": f"page-{pno + 1}.{'jpg' if fmt == 'jpeg' else 'png'}",
-            "b64": base64.b64encode(pix.tobytes(fmt)).decode(),
+            "b64": base64.b64encode(pix.tobytes(fmt, jpg_quality=int(quality))).decode(),
         })
     return json.dumps(out)
 

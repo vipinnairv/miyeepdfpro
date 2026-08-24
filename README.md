@@ -30,7 +30,7 @@ Fifteen tools, reachable from a dashboard on the home screen.
 
 **Convert**
 - **OCR** — recognise scanned pages and write a real *invisible text layer* back into the PDF, so the output is genuinely searchable.
-- **Export** — Word/HTML, plain text, tables to CSV, embedded images, and page renders to PNG.
+- **Export** — Word/HTML, plain text, tables to a formatted Excel workbook (or CSV), embedded images, and page renders to PNG or JPEG.
 
 
 ## Real redaction, real encryption
