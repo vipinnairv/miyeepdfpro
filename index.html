@@ -13,14 +13,14 @@
 
     <!-- SVG first for modern browsers; .ico covers older ones and the
          automatic /favicon.ico request. -->
-    <link rel="icon" href="favicon.svg?v=4.12.0" type="image/svg+xml">
-    <link rel="icon" href="favicon.ico?v=4.12.0" sizes="16x16 32x32 48x48">
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.12.0">
-    <link rel="manifest" href="site.webmanifest?v=4.12.0">
+    <link rel="icon" href="favicon.svg?v=4.13.0" type="image/svg+xml">
+    <link rel="icon" href="favicon.ico?v=4.13.0" sizes="16x16 32x32 48x48">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.13.0">
+    <link rel="manifest" href="site.webmanifest?v=4.13.0">
 
     <!-- ?v= busts the browser cache on redeploy: without it a stale app.js/style.css
          pair silently breaks the page. Bump APP_VERSION in app.js to match. -->
-    <link rel="stylesheet" href="style.css?v=4.12.0">
+    <link rel="stylesheet" href="style.css?v=4.13.0">
     <script src="https://cdn.jsdelivr.net/pyodide/v314.0.5/full/pyodide.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
@@ -29,7 +29,7 @@
     <header class="header">
         <div class="header__content">
             <h1 class="header__title">
-                <img class="header__logo" src="logo.svg?v=4.12.0" alt="" width="34" height="34">
+                <img class="header__logo" src="logo.svg?v=4.13.0" alt="" width="34" height="34">
                 MiyeePDF <span class="header__byline">Built by Vipin Nair</span>
             </h1>
             <div class="header__right">
@@ -337,9 +337,9 @@
                 <h2>Watermark, Stamps &amp; Numbering</h2>
                 <p>Watermarks, approval stamps, page numbers, headers/footers and legal Bates numbering</p>
             </div>
-            <div class="file-drop-zone" data-drop="stamp" role="button" tabindex="0" aria-label="Choose a PDF, or drop one here">
-                <p>Drop a PDF here or click to select</p>
-                <input type="file" id="stamp-file" accept=".pdf" hidden>
+            <div class="file-drop-zone" data-drop="stamp" role="button" tabindex="0" aria-label="Choose one or more PDFs, or drop them here">
+                <p>Drop one or more PDFs here, or click to select</p>
+                <input type="file" id="stamp-file" accept=".pdf" multiple hidden>
                 <button class="btn btn--primary" data-pick="stamp-file">Select PDF</button>
             </div>
 
@@ -358,6 +358,8 @@
                     </div>
                 </div>
                 <aside class="workspace__side">
+                    <div id="stamp-summary" class="summary-box hidden"></div>
+                    <div id="stamp-result" class="result-box hidden"></div>
                     <div class="sub-tabs">
                         <button class="sub-tab active" data-stampsec="water">Watermark</button>
                         <button class="sub-tab" data-stampsec="stamps">Stamps</button>
@@ -479,9 +481,9 @@
                 <h2>OCR - Make Scanned PDFs Searchable</h2>
                 <p>Recognised text is written back as a real invisible text layer, so the PDF becomes searchable and selectable</p>
             </div>
-            <div class="file-drop-zone" data-drop="ocr" role="button" tabindex="0" aria-label="Choose a PDF, or drop one here">
-                <p>Drop a scanned PDF here or click to select</p>
-                <input type="file" id="ocr-file" accept=".pdf" hidden>
+            <div class="file-drop-zone" data-drop="ocr" role="button" tabindex="0" aria-label="Choose one or more PDFs, or drop them here">
+                <p>Drop one or more scanned PDFs here, or click to select</p>
+                <input type="file" id="ocr-file" accept=".pdf" multiple hidden>
                 <button class="btn btn--primary" data-pick="ocr-file">Select PDF</button>
             </div>
 
@@ -521,6 +523,7 @@
                     <span class="progress-text" id="ocr-pct">0%</span>
                 </div>
                 <p id="ocr-status" class="muted"></p>
+                <div id="ocr-result" class="result-box hidden"></div>
                 <div class="action-buttons">
                     <button class="btn btn--primary" id="ocr-run">Run OCR</button>
                     <button class="btn btn--outline" id="ocr-save" disabled>💾 Save Searchable PDF</button>
@@ -534,9 +537,9 @@
                 <h2>Compress PDF</h2>
                 <p>Recompresses images and cleans the file - your text stays real vector text, still searchable</p>
             </div>
-            <div class="file-drop-zone" data-drop="compress" role="button" tabindex="0" aria-label="Choose a PDF, or drop one here">
-                <p>Drop a PDF here or click to select</p>
-                <input type="file" id="compress-file" accept=".pdf" hidden>
+            <div class="file-drop-zone" data-drop="compress" role="button" tabindex="0" aria-label="Choose one or more PDFs, or drop them here">
+                <p>Drop one or more PDFs here, or click to select</p>
+                <input type="file" id="compress-file" accept=".pdf" multiple hidden>
                 <button class="btn btn--primary" data-pick="compress-file">Select PDF</button>
             </div>
             <div class="panel hidden" id="compress-workspace">
@@ -560,13 +563,14 @@
                 <h2>Protect with a Password</h2>
                 <p>Real AES-256 encryption applied to the document itself - pages are never flattened to images</p>
             </div>
-            <div class="file-drop-zone" data-drop="protect" role="button" tabindex="0" aria-label="Choose a PDF, or drop one here">
-                <p>Drop a PDF here or click to select</p>
-                <input type="file" id="protect-file" accept=".pdf" hidden>
+            <div class="file-drop-zone" data-drop="protect" role="button" tabindex="0" aria-label="Choose one or more PDFs, or drop them here">
+                <p>Drop one or more PDFs here, or click to select</p>
+                <input type="file" id="protect-file" accept=".pdf" multiple hidden>
                 <button class="btn btn--primary" data-pick="protect-file">Select PDF</button>
             </div>
             <div class="panel hidden" id="protect-workspace">
                 <div id="protect-summary" class="summary-box"></div>
+                <div id="protect-result" class="result-box hidden"></div>
                 <div class="form-group">
                     <label class="form-label">Open password (required to view)</label>
                     <input type="password" id="protect-user-pw" class="form-control" placeholder="Enter a password">
@@ -690,12 +694,13 @@
                 <h2>Inspect &amp; Sanitize</h2>
                 <p>Shows what travels with a PDF beyond its visible pages - author names, attachments, scripts, hidden layers - then strips it</p>
             </div>
-            <div class="file-drop-zone" data-drop="inspect" role="button" tabindex="0" aria-label="Choose a PDF, or drop one here">
-                <p>Drop a PDF here or click to select</p>
-                <input type="file" id="inspect-file" accept=".pdf" hidden>
+            <div class="file-drop-zone" data-drop="inspect" role="button" tabindex="0" aria-label="Choose one or more PDFs, or drop them here">
+                <p>Drop one or more PDFs here, or click to select</p>
+                <input type="file" id="inspect-file" accept=".pdf" multiple hidden>
                 <button class="btn btn--primary" data-pick="inspect-file">Select PDF</button>
             </div>
             <div class="panel hidden" id="inspect-workspace">
+                <div id="inspect-summary" class="summary-box hidden"></div>
                 <div id="inspect-counts" class="summary-box"></div>
                 <div id="inspect-findings" class="findings"></div>
                 <h4 class="side-subtitle">Remove before sharing</h4>
@@ -721,9 +726,9 @@
                 <h2>Find &amp; Replace</h2>
                 <p>Real search-and-replace inside a PDF - each replacement takes on the font, size and colour of the text it replaces</p>
             </div>
-            <div class="file-drop-zone" data-drop="replace" role="button" tabindex="0" aria-label="Choose a PDF, or drop one here">
-                <p>Drop a PDF here or click to select</p>
-                <input type="file" id="replace-file" accept=".pdf" hidden>
+            <div class="file-drop-zone" data-drop="replace" role="button" tabindex="0" aria-label="Choose one or more PDFs, or drop them here">
+                <p>Drop one or more PDFs here, or click to select</p>
+                <input type="file" id="replace-file" accept=".pdf" multiple hidden>
                 <button class="btn btn--primary" data-pick="replace-file">Select PDF</button>
             </div>
             <div class="panel hidden" id="replace-workspace">
@@ -945,6 +950,6 @@
         </div>
     </footer>
 
-    <script src="app.js?v=4.12.0"></script>
+    <script src="app.js?v=4.13.0"></script>
 </body>
 </html>
