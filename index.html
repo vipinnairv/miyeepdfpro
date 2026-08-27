@@ -13,14 +13,14 @@
 
     <!-- SVG first for modern browsers; .ico covers older ones and the
          automatic /favicon.ico request. -->
-    <link rel="icon" href="favicon.svg?v=4.9.0" type="image/svg+xml">
-    <link rel="icon" href="favicon.ico?v=4.9.0" sizes="16x16 32x32 48x48">
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.9.0">
-    <link rel="manifest" href="site.webmanifest?v=4.9.0">
+    <link rel="icon" href="favicon.svg?v=4.10.0" type="image/svg+xml">
+    <link rel="icon" href="favicon.ico?v=4.10.0" sizes="16x16 32x32 48x48">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.10.0">
+    <link rel="manifest" href="site.webmanifest?v=4.10.0">
 
     <!-- ?v= busts the browser cache on redeploy: without it a stale app.js/style.css
          pair silently breaks the page. Bump APP_VERSION in app.js to match. -->
-    <link rel="stylesheet" href="style.css?v=4.9.0">
+    <link rel="stylesheet" href="style.css?v=4.10.0">
     <script src="https://cdn.jsdelivr.net/pyodide/v314.0.5/full/pyodide.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
@@ -29,7 +29,7 @@
     <header class="header">
         <div class="header__content">
             <h1 class="header__title">
-                <img class="header__logo" src="logo.svg?v=4.9.0" alt="" width="34" height="34">
+                <img class="header__logo" src="logo.svg?v=4.10.0" alt="" width="34" height="34">
                 MiyeePDF <span class="header__byline">Built by Vipin Nair</span>
             </h1>
             <div class="header__right">
@@ -154,6 +154,40 @@
                         </div>
                     </div>
                     <p class="hint" id="edit-hint">Tap any highlighted text and type - you edit straight on the page, in the page&#39;s own font. Switch modes above to annotate instead.</p>
+
+                    <!-- Shown only for a scanned page, where the words are
+                         pixels in an image and there is nothing to click. -->
+                    <div class="scan-notice hidden" id="edit-scan-notice">
+                        <div class="scan-notice__body">
+                            <strong id="edit-scan-title">This page is a scan.</strong>
+                            <span id="edit-scan-detail">The words are part of an image, so there is no text to tap yet. Reading the page makes it editable.</span>
+                        </div>
+                        <div class="scan-notice__actions">
+                            <label class="tool-option" for="edit-scan-lang">Language
+                                <select id="edit-scan-lang" class="form-control form-control--small">
+                                    <option value="eng">English</option>
+                                    <option value="eng+hin">English + Hindi</option>
+                                    <option value="hin">Hindi</option>
+                                    <option value="eng+guj">English + Gujarati</option>
+                                    <option value="eng+mar">English + Marathi</option>
+                                    <option value="eng+tam">English + Tamil</option>
+                                    <option value="eng+tel">English + Telugu</option>
+                                    <option value="fra">French</option>
+                                    <option value="deu">German</option>
+                                    <option value="spa">Spanish</option>
+                                </select>
+                            </label>
+                            <label class="tool-option">
+                                <input type="checkbox" id="edit-scan-all"> All pages
+                            </label>
+                            <button class="btn btn--primary btn--sm" id="edit-scan-ocr">Make this page editable</button>
+                        </div>
+                        <div class="progress-bar hidden" id="edit-scan-bar">
+                            <div class="progress-fill" id="edit-scan-fill"></div>
+                            <span class="progress-text" id="edit-scan-pct">0%</span>
+                        </div>
+                        <p class="muted hidden" id="edit-scan-status"></p>
+                    </div>
                     <div class="page-holder" id="edit-holder">
                         <img class="page-image" id="edit-page-img" alt="PDF page">
                         <div class="overlay" id="edit-overlay"></div>
@@ -897,6 +931,6 @@
         </div>
     </footer>
 
-    <script src="app.js?v=4.9.0"></script>
+    <script src="app.js?v=4.10.0"></script>
 </body>
 </html>
