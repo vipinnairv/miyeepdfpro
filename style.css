@@ -1630,3 +1630,71 @@ body {
 @media (max-width: 720px) {
   .engine-banner__note { display: none; }
 }
+
+/* Unlock dialog ---------------------------------------------------------- */
+
+.pw-error {
+  margin: var(--space-8) 0 0;
+  color: var(--color-error);
+  font-size: var(--font-size-sm);
+}
+
+.pw-error.hidden { display: none; }
+.pw-note { margin: var(--space-12) 0 0; }
+#pw-modal .form-label { margin-top: var(--space-12); }
+
+/* Mobile navigation ------------------------------------------------------
+   Fifteen tabs wrap into three or four rows on a phone, pushing the actual
+   tool off-screen. Below the breakpoint they become one horizontally
+   scrollable strip instead, so the content starts where it should. */
+
+@media (max-width: 720px) {
+  .tab-nav {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0 var(--space-8);
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x proximity;
+  }
+
+  .tab-nav::-webkit-scrollbar { display: none; }
+
+  .tab-btn {
+    padding: var(--space-10) var(--space-12);
+    scroll-snap-align: start;
+    flex: none;
+  }
+
+  /* Comfortably tappable targets on a touch screen. */
+  .btn, .tab-btn, .mode-btn, .export-card { min-height: 44px; }
+}
+
+/* Respect a reduced-motion preference. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Keyboard focus needs to be visible; the mouse-driven styles alone are not
+   enough to navigate by. */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm, 4px);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}

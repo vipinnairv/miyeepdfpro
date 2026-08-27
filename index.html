@@ -13,14 +13,14 @@
 
     <!-- SVG first for modern browsers; .ico covers older ones and the
          automatic /favicon.ico request. -->
-    <link rel="icon" href="favicon.svg?v=4.6.0" type="image/svg+xml">
-    <link rel="icon" href="favicon.ico?v=4.6.0" sizes="16x16 32x32 48x48">
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.6.0">
-    <link rel="manifest" href="site.webmanifest?v=4.6.0">
+    <link rel="icon" href="favicon.svg?v=4.8.0" type="image/svg+xml">
+    <link rel="icon" href="favicon.ico?v=4.8.0" sizes="16x16 32x32 48x48">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.8.0">
+    <link rel="manifest" href="site.webmanifest?v=4.8.0">
 
     <!-- ?v= busts the browser cache on redeploy: without it a stale app.js/style.css
          pair silently breaks the page. Bump APP_VERSION in app.js to match. -->
-    <link rel="stylesheet" href="style.css?v=4.7.1">
+    <link rel="stylesheet" href="style.css?v=4.8.0">
     <script src="https://cdn.jsdelivr.net/pyodide/v314.0.5/full/pyodide.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
@@ -29,39 +29,39 @@
     <header class="header">
         <div class="header__content">
             <h1 class="header__title">
-                <img class="header__logo" src="logo.svg?v=4.6.0" alt="" width="34" height="34">
+                <img class="header__logo" src="logo.svg?v=4.8.0" alt="" width="34" height="34">
                 MiyeePDF <span class="header__byline">Built by Vipin Nair</span>
             </h1>
             <div class="header__right">
                 <span id="engine-badge" class="engine-badge engine-badge--loading" title="Workspace status">
                     <span class="engine-dot"></span><span id="engine-badge-text">Preparing…</span>
                 </span>
-                <button id="theme-toggle" class="btn btn--sm theme-toggle" title="Toggle dark mode">🌙</button>
+                <button id="theme-toggle" class="btn btn--sm theme-toggle" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
             </div>
         </div>
     </header>
 
     <div class="main-container" id="main-container">
-        <nav class="tab-nav">
-            <button class="tab-btn active" data-tab="home">🏠 Home</button>
-            <button class="tab-btn" data-tab="edit">📝 Edit Text</button>
-            <button class="tab-btn" data-tab="pages">📚 Pages</button>
-            <button class="tab-btn" data-tab="sign">🖊️ Fill &amp; Sign</button>
-            <button class="tab-btn" data-tab="stamp">💧 Watermark</button>
-            <button class="tab-btn" data-tab="ocr">🔍 OCR</button>
-            <button class="tab-btn" data-tab="compress">🗜️ Compress</button>
-            <button class="tab-btn" data-tab="protect">🔒 Protect</button>
-            <button class="tab-btn" data-tab="redact">⬛ Redact</button>
-            <button class="tab-btn" data-tab="scan">🛡️ Find Sensitive Data</button>
-            <button class="tab-btn" data-tab="inspect">🕵️ Inspect</button>
-            <button class="tab-btn" data-tab="replace">🔁 Find &amp; Replace</button>
-            <button class="tab-btn" data-tab="autosplit">✂️ Auto-Split</button>
-            <button class="tab-btn" data-tab="export">📤 Export</button>
-            <button class="tab-btn" data-tab="compare">⚖️ Compare</button>
+        <nav class="tab-nav" role="tablist" aria-label="PDF tools">
+            <button class="tab-btn active" data-tab="home" role="tab" aria-selected="true" aria-controls="home-tab">🏠 Home</button>
+            <button class="tab-btn" data-tab="edit" role="tab" aria-selected="false" aria-controls="edit-tab">📝 Edit Text</button>
+            <button class="tab-btn" data-tab="pages" role="tab" aria-selected="false" aria-controls="pages-tab">📚 Pages</button>
+            <button class="tab-btn" data-tab="sign" role="tab" aria-selected="false" aria-controls="sign-tab">🖊️ Fill &amp; Sign</button>
+            <button class="tab-btn" data-tab="stamp" role="tab" aria-selected="false" aria-controls="stamp-tab">💧 Watermark</button>
+            <button class="tab-btn" data-tab="ocr" role="tab" aria-selected="false" aria-controls="ocr-tab">🔍 OCR</button>
+            <button class="tab-btn" data-tab="compress" role="tab" aria-selected="false" aria-controls="compress-tab">🗜️ Compress</button>
+            <button class="tab-btn" data-tab="protect" role="tab" aria-selected="false" aria-controls="protect-tab">🔒 Protect</button>
+            <button class="tab-btn" data-tab="redact" role="tab" aria-selected="false" aria-controls="redact-tab">⬛ Redact</button>
+            <button class="tab-btn" data-tab="scan" role="tab" aria-selected="false" aria-controls="scan-tab">🛡️ Find Sensitive Data</button>
+            <button class="tab-btn" data-tab="inspect" role="tab" aria-selected="false" aria-controls="inspect-tab">🕵️ Inspect</button>
+            <button class="tab-btn" data-tab="replace" role="tab" aria-selected="false" aria-controls="replace-tab">🔁 Find &amp; Replace</button>
+            <button class="tab-btn" data-tab="autosplit" role="tab" aria-selected="false" aria-controls="autosplit-tab">✂️ Auto-Split</button>
+            <button class="tab-btn" data-tab="export" role="tab" aria-selected="false" aria-controls="export-tab">📤 Export</button>
+            <button class="tab-btn" data-tab="compare" role="tab" aria-selected="false" aria-controls="compare-tab">⚖️ Compare</button>
         </nav>
 
         <!-- ============================== HOME =============================== -->
-        <div class="tab-content active" id="home-tab">
+        <div class="tab-content active" id="home-tab" role="tabpanel" tabindex="0">
             <div class="hero">
                 <h2>Everything you can do with MiyeePDF</h2>
                 <p>Fifteen tools, all running on your own device. Pick one to begin.</p>
@@ -74,7 +74,7 @@
         <!-- Boot progress. Deliberately a slim banner rather than an overlay:
              the whole app is usable while this runs, and only an actual PDF
              operation has to wait for it. -->
-        <div id="engine-loading" class="engine-banner">
+        <div id="engine-loading" class="engine-banner" role="status" aria-live="polite">
             <div class="engine-banner__row">
                 <div class="engine-banner__spinner"></div>
                 <div class="engine-banner__text">
@@ -83,12 +83,12 @@
                 </div>
                 <span class="engine-banner__note">One-time download, then cached. Files never leave your device.</span>
             </div>
-            <div class="progress-bar engine-banner__bar">
+            <div class="progress-bar engine-banner__bar" role="progressbar" aria-label="Loading progress" aria-valuemin="0" aria-valuemax="100">
                 <div class="progress-fill" id="engine-progress-fill"></div>
             </div>
         </div>
 
-        <div id="status-container" class="status-container hidden">
+        <div id="status-container" class="status-container hidden" role="status" aria-live="polite">
             <div class="status-content">
                 <div class="loading-spinner"></div>
                 <p id="status-text">Processing…</p>
@@ -100,12 +100,12 @@
         </div>
 
         <!-- ============================ EDIT TEXT ============================ -->
-        <div class="tab-content" id="edit-tab">
+        <div class="tab-content" id="edit-tab" role="tabpanel" tabindex="0">
             <div class="tool-header">
                 <h2>Edit Text &amp; Annotate</h2>
                 <p>Click any text to edit it for real - the original glyphs are replaced in the PDF, not covered up</p>
             </div>
-            <div class="file-drop-zone" data-drop="edit">
+            <div class="file-drop-zone" data-drop="edit" role="button" tabindex="0" aria-label="Choose a PDF, or drop one here">
                 <p>Drop a PDF here or click to select</p>
                 <input type="file" id="edit-file" accept=".pdf" hidden>
                 <button class="btn btn--primary" data-pick="edit-file">Select PDF</button>
@@ -115,9 +115,9 @@
                 <div class="workspace__main">
                     <div class="viewer-toolbar">
                         <div class="tool-group">
-                            <button class="btn btn--sm" data-nav="edit" data-dir="-1">◀</button>
+                            <button class="btn btn--sm" data-nav="edit" data-dir="-1" aria-label="Previous page">◀</button>
                             <span class="page-indicator" id="edit-page-info">-/-</span>
-                            <button class="btn btn--sm" data-nav="edit" data-dir="1">▶</button>
+                            <button class="btn btn--sm" data-nav="edit" data-dir="1" aria-label="Next page">▶</button>
                         </div>
                         <div class="tool-group">
                             <button class="mode-btn active" data-editmode="TEXT">✏️ Line</button>
@@ -179,12 +179,12 @@
         </div>
 
         <!-- ============================== PAGES ============================== -->
-        <div class="tab-content" id="pages-tab">
+        <div class="tab-content" id="pages-tab" role="tabpanel" tabindex="0">
             <div class="tool-header">
                 <h2>Organize Pages</h2>
                 <p>Reorder, rotate, delete, merge and split - without ever degrading quality</p>
             </div>
-            <div class="file-drop-zone" data-drop="pages">
+            <div class="file-drop-zone" data-drop="pages" role="button" tabindex="0" aria-label="Choose a PDF, or drop one here">
                 <p>Drop one or more PDFs here (multiple files will be merged in order)</p>
                 <input type="file" id="pages-file" accept=".pdf" multiple hidden>
                 <button class="btn btn--primary" data-pick="pages-file">Select PDFs</button>
@@ -223,12 +223,12 @@
         </div>
 
         <!-- ============================ FILL & SIGN ========================== -->
-        <div class="tab-content" id="sign-tab">
+        <div class="tab-content" id="sign-tab" role="tabpanel" tabindex="0">
             <div class="tool-header">
                 <h2>Fill &amp; Sign</h2>
                 <p>Sign, initial, date and check - plus real AcroForm field filling</p>
             </div>
-            <div class="file-drop-zone" data-drop="sign">
+            <div class="file-drop-zone" data-drop="sign" role="button" tabindex="0" aria-label="Choose a PDF, or drop one here">
                 <p>Drop a PDF here or click to select</p>
                 <input type="file" id="sign-file" accept=".pdf" hidden>
                 <button class="btn btn--primary" data-pick="sign-file">Select PDF</button>
@@ -238,9 +238,9 @@
                 <div class="workspace__main">
                     <div class="viewer-toolbar">
                         <div class="tool-group">
-                            <button class="btn btn--sm" data-nav="sign" data-dir="-1">◀</button>
+                            <button class="btn btn--sm" data-nav="sign" data-dir="-1" aria-label="Previous page">◀</button>
                             <span class="page-indicator" id="sign-page-info">-/-</span>
-                            <button class="btn btn--sm" data-nav="sign" data-dir="1">▶</button>
+                            <button class="btn btn--sm" data-nav="sign" data-dir="1" aria-label="Next page">▶</button>
                         </div>
                         <div class="tool-group">
                             <button class="mode-btn active" data-signtool="SIGNATURE">✍️ Signature</button>
@@ -274,12 +274,12 @@
         </div>
 
         <!-- ====================== WATERMARK / STAMP / NUMBER ================= -->
-        <div class="tab-content" id="stamp-tab">
+        <div class="tab-content" id="stamp-tab" role="tabpanel" tabindex="0">
             <div class="tool-header">
                 <h2>Watermark, Stamps &amp; Numbering</h2>
                 <p>Watermarks, approval stamps, page numbers, headers/footers and legal Bates numbering</p>
             </div>
-            <div class="file-drop-zone" data-drop="stamp">
+            <div class="file-drop-zone" data-drop="stamp" role="button" tabindex="0" aria-label="Choose a PDF, or drop one here">
                 <p>Drop a PDF here or click to select</p>
                 <input type="file" id="stamp-file" accept=".pdf" hidden>
                 <button class="btn btn--primary" data-pick="stamp-file">Select PDF</button>
@@ -289,9 +289,9 @@
                 <div class="workspace__main">
                     <div class="viewer-toolbar">
                         <div class="tool-group">
-                            <button class="btn btn--sm" data-nav="stamp" data-dir="-1">◀</button>
+                            <button class="btn btn--sm" data-nav="stamp" data-dir="-1" aria-label="Previous page">◀</button>
                             <span class="page-indicator" id="stamp-page-info">-/-</span>
-                            <button class="btn btn--sm" data-nav="stamp" data-dir="1">▶</button>
+                            <button class="btn btn--sm" data-nav="stamp" data-dir="1" aria-label="Next page">▶</button>
                         </div>
                     </div>
                     <div class="page-holder" id="stamp-holder">
@@ -416,12 +416,12 @@
         </div>
 
         <!-- =============================== OCR ============================== -->
-        <div class="tab-content" id="ocr-tab">
+        <div class="tab-content" id="ocr-tab" role="tabpanel" tabindex="0">
             <div class="tool-header">
                 <h2>OCR - Make Scanned PDFs Searchable</h2>
                 <p>Recognised text is written back as a real invisible text layer, so the PDF becomes searchable and selectable</p>
             </div>
-            <div class="file-drop-zone" data-drop="ocr">
+            <div class="file-drop-zone" data-drop="ocr" role="button" tabindex="0" aria-label="Choose a PDF, or drop one here">
                 <p>Drop a scanned PDF here or click to select</p>
                 <input type="file" id="ocr-file" accept=".pdf" hidden>
                 <button class="btn btn--primary" data-pick="ocr-file">Select PDF</button>
@@ -460,12 +460,12 @@
         </div>
 
         <!-- ============================ COMPRESS ============================ -->
-        <div class="tab-content" id="compress-tab">
+        <div class="tab-content" id="compress-tab" role="tabpanel" tabindex="0">
             <div class="tool-header">
                 <h2>Compress PDF</h2>
                 <p>Recompresses images and cleans the file - your text stays real vector text, still searchable</p>
             </div>
-            <div class="file-drop-zone" data-drop="compress">
+            <div class="file-drop-zone" data-drop="compress" role="button" tabindex="0" aria-label="Choose a PDF, or drop one here">
                 <p>Drop a PDF here or click to select</p>
                 <input type="file" id="compress-file" accept=".pdf" hidden>
                 <button class="btn btn--primary" data-pick="compress-file">Select PDF</button>
@@ -486,12 +486,12 @@
         </div>
 
         <!-- ============================= PROTECT ============================ -->
-        <div class="tab-content" id="protect-tab">
+        <div class="tab-content" id="protect-tab" role="tabpanel" tabindex="0">
             <div class="tool-header">
                 <h2>Protect with a Password</h2>
                 <p>Real AES-256 encryption applied to the document itself - pages are never flattened to images</p>
             </div>
-            <div class="file-drop-zone" data-drop="protect">
+            <div class="file-drop-zone" data-drop="protect" role="button" tabindex="0" aria-label="Choose a PDF, or drop one here">
                 <p>Drop a PDF here or click to select</p>
                 <input type="file" id="protect-file" accept=".pdf" hidden>
                 <button class="btn btn--primary" data-pick="protect-file">Select PDF</button>
@@ -523,12 +523,12 @@
         </div>
 
         <!-- ============================== REDACT ============================ -->
-        <div class="tab-content" id="redact-tab">
+        <div class="tab-content" id="redact-tab" role="tabpanel" tabindex="0">
             <div class="tool-header">
                 <h2>Redact</h2>
                 <p>Content under a redaction is deleted from the file - not just painted over. The rest of the page stays vector.</p>
             </div>
-            <div class="file-drop-zone" data-drop="redact">
+            <div class="file-drop-zone" data-drop="redact" role="button" tabindex="0" aria-label="Choose a PDF, or drop one here">
                 <p>Drop a PDF here or click to select</p>
                 <input type="file" id="redact-file" accept=".pdf" hidden>
                 <button class="btn btn--primary" data-pick="redact-file">Select PDF</button>
@@ -538,9 +538,9 @@
                 <div class="workspace__main">
                     <div class="viewer-toolbar">
                         <div class="tool-group">
-                            <button class="btn btn--sm" data-nav="redact" data-dir="-1">◀</button>
+                            <button class="btn btn--sm" data-nav="redact" data-dir="-1" aria-label="Previous page">◀</button>
                             <span class="page-indicator" id="redact-page-info">-/-</span>
-                            <button class="btn btn--sm" data-nav="redact" data-dir="1">▶</button>
+                            <button class="btn btn--sm" data-nav="redact" data-dir="1" aria-label="Next page">▶</button>
                         </div>
                         <div class="tool-group">
                             <label class="tool-option">Box colour
@@ -576,12 +576,12 @@
         </div>
 
         <!-- ====================== FIND SENSITIVE DATA ====================== -->
-        <div class="tab-content" id="scan-tab">
+        <div class="tab-content" id="scan-tab" role="tabpanel" tabindex="0">
             <div class="tool-header">
                 <h2>Find Sensitive Data</h2>
                 <p>Scans the whole document for identifiers people forget are in there - then removes the ones you choose, permanently</p>
             </div>
-            <div class="file-drop-zone" data-drop="scan">
+            <div class="file-drop-zone" data-drop="scan" role="button" tabindex="0" aria-label="Choose a PDF, or drop one here">
                 <p>Drop a PDF here or click to select</p>
                 <input type="file" id="scan-file" accept=".pdf" hidden>
                 <button class="btn btn--primary" data-pick="scan-file">Select PDF</button>
@@ -616,12 +616,12 @@
         </div>
 
         <!-- ============================= INSPECT ============================ -->
-        <div class="tab-content" id="inspect-tab">
+        <div class="tab-content" id="inspect-tab" role="tabpanel" tabindex="0">
             <div class="tool-header">
                 <h2>Inspect &amp; Sanitize</h2>
                 <p>Shows what travels with a PDF beyond its visible pages - author names, attachments, scripts, hidden layers - then strips it</p>
             </div>
-            <div class="file-drop-zone" data-drop="inspect">
+            <div class="file-drop-zone" data-drop="inspect" role="button" tabindex="0" aria-label="Choose a PDF, or drop one here">
                 <p>Drop a PDF here or click to select</p>
                 <input type="file" id="inspect-file" accept=".pdf" hidden>
                 <button class="btn btn--primary" data-pick="inspect-file">Select PDF</button>
@@ -647,12 +647,12 @@
         </div>
 
         <!-- ========================= FIND & REPLACE ========================= -->
-        <div class="tab-content" id="replace-tab">
+        <div class="tab-content" id="replace-tab" role="tabpanel" tabindex="0">
             <div class="tool-header">
                 <h2>Find &amp; Replace</h2>
                 <p>Real search-and-replace inside a PDF - each replacement takes on the font, size and colour of the text it replaces</p>
             </div>
-            <div class="file-drop-zone" data-drop="replace">
+            <div class="file-drop-zone" data-drop="replace" role="button" tabindex="0" aria-label="Choose a PDF, or drop one here">
                 <p>Drop a PDF here or click to select</p>
                 <input type="file" id="replace-file" accept=".pdf" hidden>
                 <button class="btn btn--primary" data-pick="replace-file">Select PDF</button>
@@ -682,12 +682,12 @@
         </div>
 
         <!-- =========================== AUTO-SPLIT ========================== -->
-        <div class="tab-content" id="autosplit-tab">
+        <div class="tab-content" id="autosplit-tab" role="tabpanel" tabindex="0">
             <div class="tool-header">
                 <h2>Auto-Split by Content</h2>
                 <p>Cuts a combined bundle wherever a marker appears - each invoice or statement becomes its own file, named from the text itself</p>
             </div>
-            <div class="file-drop-zone" data-drop="autosplit">
+            <div class="file-drop-zone" data-drop="autosplit" role="button" tabindex="0" aria-label="Choose a PDF, or drop one here">
                 <p>Drop a combined PDF here or click to select</p>
                 <input type="file" id="autosplit-file" accept=".pdf" hidden>
                 <button class="btn btn--primary" data-pick="autosplit-file">Select PDF</button>
@@ -711,12 +711,12 @@
         </div>
 
         <!-- ============================== EXPORT =========================== -->
-        <div class="tab-content" id="export-tab">
+        <div class="tab-content" id="export-tab" role="tabpanel" tabindex="0">
             <div class="tool-header">
                 <h2>Export &amp; Convert</h2>
                 <p>Turn a PDF into Word-ready HTML, spreadsheets, plain text or images</p>
             </div>
-            <div class="file-drop-zone" data-drop="export">
+            <div class="file-drop-zone" data-drop="export" role="button" tabindex="0" aria-label="Choose a PDF, or drop one here">
                 <p>Drop a PDF here or click to select</p>
                 <input type="file" id="export-file" accept=".pdf" hidden>
                 <button class="btn btn--primary" data-pick="export-file">Select PDF</button>
@@ -725,8 +725,12 @@
                 <div id="export-summary" class="summary-box"></div>
                 <div class="export-grid">
                     <button class="export-card" id="export-doc">
-                        <span class="export-icon">📄</span><strong>Word / HTML</strong>
-                        <small>Opens in Word with layout preserved</small>
+                        <span class="export-icon">📄</span><strong>Word</strong>
+                        <small>A real .docx, fully editable, headings kept</small>
+                    </button>
+                    <button class="export-card" id="export-html">
+                        <span class="export-icon">🌐</span><strong>Web page</strong>
+                        <small>HTML that keeps the original layout</small>
                     </button>
                     <button class="export-card" id="export-text">
                         <span class="export-icon">📝</span><strong>Plain text</strong>
@@ -771,7 +775,7 @@
         </div>
 
         <!-- ============================= COMPARE =========================== -->
-        <div class="tab-content" id="compare-tab">
+        <div class="tab-content" id="compare-tab" role="tabpanel" tabindex="0">
             <div class="tool-header">
                 <h2>Compare Two PDFs</h2>
                 <p>Word-level differences between two versions, with the changes highlighted in a downloadable copy</p>
@@ -798,13 +802,37 @@
         </div>
     </div>
 
+    <!-- Unlock modal. Shared by every tool, so an encrypted PDF behaves the
+         same way wherever it is opened. -->
+    <div id="pw-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="pw-title">
+        <div class="modal__backdrop" data-pwclose></div>
+        <div class="modal__dialog modal__dialog--sm">
+            <div class="modal__header">
+                <h3 id="pw-title">This PDF is password-protected</h3>
+                <button class="modal__close" data-pwclose aria-label="Cancel">&times;</button>
+            </div>
+            <div class="modal__body">
+                <p class="muted" id="pw-file"></p>
+                <label class="form-label" for="pw-input">Password</label>
+                <input type="password" id="pw-input" class="form-control"
+                       placeholder="Enter the password" autocomplete="current-password">
+                <p class="pw-error hidden" id="pw-error">That password did not work. Try again.</p>
+                <p class="muted pw-note">The password is used on your device only, to open the file.</p>
+            </div>
+            <div class="modal__footer">
+                <button class="btn btn--outline" data-pwclose>Cancel</button>
+                <button class="btn btn--primary" id="pw-submit">Unlock</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Signature modal -->
     <div id="sig-modal" class="modal hidden">
         <div class="modal__backdrop" data-sigclose></div>
         <div class="modal__dialog">
             <div class="modal__header">
                 <h3 id="sig-title">Create Signature</h3>
-                <button class="modal__close" data-sigclose>&times;</button>
+                <button class="modal__close" data-sigclose aria-label="Close">&times;</button>
             </div>
             <div class="modal__body">
                 <div class="sub-tabs">
@@ -848,6 +876,6 @@
         </div>
     </footer>
 
-    <script src="app.js?v=4.7.1"></script>
+    <script src="app.js?v=4.8.0"></script>
 </body>
 </html>

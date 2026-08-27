@@ -11,7 +11,7 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.7.1';
+const APP_VERSION = '4.8.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -106,6 +106,29 @@ class PyEngine {
     async callJSON(fn, ...args) {
         const raw = await this.call(fn, ...args);
         return typeof raw === 'string' ? JSON.parse(raw) : raw;
+    }
+
+    /** Open a PDF, asking for the password if the file turns out to be
+     * encrypted. Every tool loads documents through here, so a protected file
+     * behaves the same way wherever it is opened rather than failing with a
+     * raw engine error in fourteen of the fifteen tabs.
+     *
+     * Returns the same metadata as open_doc. Throws CANCELLED if the person
+     * dismisses the prompt, which the busy-wrapper treats as "no error".
+     */
+    async openDoc(docId, bytes, fileName = '') {
+        let password = '';
+        let retry = false;
+        for (;;) {
+            try {
+                return await this.callJSON('open_doc', docId, bytes, password);
+            } catch (err) {
+                if (!String(err.message || err).includes('PASSWORD_REQUIRED')) throw err;
+                password = await UI.askPassword(fileName, retry);
+                if (password === null) throw new Error('CANCELLED');
+                retry = true;
+            }
+        }
     }
 
     _unwrap(value) {
@@ -220,7 +243,15 @@ const UI = {
     showTab(name) {
         const target = `${name}-tab`;
         if (!$(target)) return;
-        $$('.tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
+        $$('.tab-btn').forEach((b) => {
+            const on = b.dataset.tab === name;
+            b.classList.toggle('active', on);
+            b.setAttribute('aria-selected', String(on));
+            // On a phone the strip scrolls; keep the chosen tab in view.
+            if (on && b.scrollIntoView) {
+                b.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+            }
+        });
         $$('.tab-content').forEach((c) => c.classList.toggle('active', c.id === target));
         window.scrollTo({ top: 0, behavior: 'smooth' });
     },
@@ -244,6 +275,11 @@ const UI = {
             const input = $(`${zone.dataset.drop}-file`);
             zone.addEventListener('click', (e) => {
                 if (e.target === zone || e.target.tagName === 'P') input.click();
+            });
+            // The zone is reachable by keyboard, so it has to respond to one.
+            zone.addEventListener('keydown', (e) => {
+                if (e.target !== zone) return;
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); }
             });
             ['dragenter', 'dragover'].forEach((ev) =>
                 zone.addEventListener(ev, (e) => { e.preventDefault(); zone.classList.add('drag-over'); }));
@@ -319,6 +355,61 @@ const UI = {
         setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 300); }, 3600);
     },
 
+    /** Ask for a PDF password. Resolves to the text typed, or null if the
+     * person cancelled. Uses a real dialog rather than window.prompt(), which
+     * mobile browsers render badly and some contexts block outright. */
+    askPassword(fileName = '', retry = false) {
+        const modal = $('pw-modal');
+        const input = $('pw-input');
+        const error = $('pw-error');
+        $('pw-file').textContent = fileName ? `${fileName} needs a password to open.` : '';
+        error.classList.toggle('hidden', !retry);
+        input.value = '';
+        modal.classList.remove('hidden');
+        setTimeout(() => input.focus(), 50);
+
+        return new Promise((resolve) => {
+            const finish = (value) => {
+                modal.classList.add('hidden');
+                $('pw-submit').removeEventListener('click', onSubmit);
+                input.removeEventListener('keydown', onKey);
+                $$('[data-pwclose]', modal).forEach((el) => el.removeEventListener('click', onCancel));
+                resolve(value);
+            };
+            const onSubmit = () => { if (input.value) finish(input.value); };
+            const onCancel = () => finish(null);
+            const onKey = (e) => {
+                if (e.key === 'Enter') { e.preventDefault(); onSubmit(); }
+                if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
+            };
+            $('pw-submit').addEventListener('click', onSubmit);
+            input.addEventListener('keydown', onKey);
+            $$('[data-pwclose]', modal).forEach((el) => el.addEventListener('click', onCancel));
+        });
+    },
+
+    /** Turn an engine exception into something worth showing a person.
+     * Python tracebacks arrive as one long string; the last line is the
+     * useful part, but the raw text still reads like a crash report. */
+    explain(err) {
+        const raw = String(err && err.message || err);
+        const last = raw.split('\n').filter(Boolean).pop() || 'Something went wrong';
+        const known = [
+            [/PASSWORD_REQUIRED/, 'This PDF is password-protected.'],
+            [/needs a password|encrypted/i, 'This PDF is password-protected.'],
+            [/cannot open broken|no objects found|not a (pdf|textpage)|format error|syntax error/i,
+             'This file could not be read as a PDF. It may be damaged or not really a PDF.'],
+            [/File too large/i, last],
+            [/out of memory|Aborted|RangeError|allocation/i,
+             'This file is too big to process in the browser. Try splitting it into smaller parts first.'],
+            [/NetworkError|Failed to fetch/i,
+             'A download failed. Check your connection and try again.'],
+        ];
+        for (const [pattern, friendly] of known) if (pattern.test(raw)) return friendly;
+        // Strip the "PythonError: ExceptionType: " preamble Pyodide prepends.
+        return last.replace(/^\w*(Error|Exception):\s*/, '').trim() || 'Something went wrong';
+    },
+
     /** Run an async job with a spinner and uniform error reporting. */
     async run(message, job) {
         // On first use the engine may still be arriving; say so rather than
@@ -327,9 +418,10 @@ const UI = {
         try {
             return await job();
         } catch (err) {
+            // Dismissing the password prompt is a choice, not a failure.
+            if (String(err.message || err).includes('CANCELLED')) return null;
             console.error(err);
-            const detail = String(err.message || err).split('\n').filter(Boolean).pop();
-            this.toast(detail, 'error');
+            this.toast(this.explain(err), 'error');
             return null;
         } finally {
             this.idle();
@@ -364,7 +456,7 @@ class DocView {
     async load(file) {
         const bytes = await fileToBytes(file);
         this.file = file;
-        this.info = await engine.callJSON('open_doc', this.docId, bytes);
+        this.info = await engine.openDoc(this.docId, bytes, file.name);
         this.pages = this.info.pages;
         this.page = 0;
         $(`${this.key}-workspace`).classList.remove('hidden');
@@ -779,12 +871,14 @@ const PagesTool = {
             const ids = [];
             for (let i = 0; i < files.length; i++) {
                 const id = `pages_src_${i}`;
-                await engine.call('open_doc', id, await fileToBytes(files[i]));
+                await engine.openDoc(id, await fileToBytes(files[i]), files[i].name);
                 ids.push(id);
             }
-            const merged = files.length > 1 ? await engine.call('merge', JSON.stringify(ids)) : null;
-            if (merged) await engine.call('open_doc', 'pages', merged);
-            else await engine.call('open_doc', 'pages', await fileToBytes(files[0]));
+            // Merging is used even for a single file: it yields a plain copy of
+            // the already-open document, so a protected file is not re-read
+            // from its still-encrypted bytes and asked about a second time.
+            const merged = await engine.call('merge', JSON.stringify(ids));
+            await engine.call('open_doc', 'pages', merged);
             for (const id of ids) await engine.call('close_doc', id);
 
             const info = await engine.callJSON('doc_info', 'pages');
@@ -1260,7 +1354,7 @@ const OcrTool = {
     async open(file) {
         if (!file) return;
         await UI.run('Analysing document…', async () => {
-            const info = await engine.callJSON('open_doc', 'ocr', await fileToBytes(file));
+            const info = await engine.openDoc('ocr', await fileToBytes(file), file.name);
             this.pages = info.pages;
             const needs = [];
             for (let i = 0; i < info.pages; i++) {
@@ -1359,7 +1453,7 @@ const CompressTool = {
         if (!file) return;
         this.file = file;
         await UI.run('Opening document…', async () => {
-            const info = await engine.callJSON('open_doc', 'compress', await fileToBytes(file));
+            const info = await engine.openDoc('compress', await fileToBytes(file), file.name);
             $('compress-workspace').classList.remove('hidden');
             $('compress-result').classList.add('hidden');
             $('compress-summary').innerHTML =
@@ -1398,15 +1492,7 @@ const ProtectTool = {
         this.file = file;
         await UI.run('Opening document…', async () => {
             const bytes = await fileToBytes(file);
-            try {
-                await engine.call('open_doc', 'protect', bytes);
-            } catch (err) {
-                if (!String(err.message).includes('PASSWORD_REQUIRED')) throw err;
-                const pw = prompt('This PDF is password-protected. Enter the password:');
-                if (!pw) throw new Error('Password required to open this file');
-                await engine.call('open_doc', 'protect', bytes, pw);
-            }
-            const info = await engine.callJSON('doc_info', 'protect');
+            const info = await engine.openDoc('protect', bytes, file.name);
             $('protect-workspace').classList.remove('hidden');
             $('protect-summary').innerHTML =
                 `<strong>${file.name}</strong> - ${info.pages} page(s) · ${formatSize(file.size)}`;
@@ -1560,6 +1646,7 @@ const ExportTool = {
     init() {
         $('export-file').addEventListener('change', (e) => this.open(e.target.files[0]));
         $('export-doc').addEventListener('click', () => this.doc());
+        $('export-html').addEventListener('click', () => this.html());
         $('export-text').addEventListener('click', () => this.text());
         $('export-tables-xlsx').addEventListener('click', () => this.tablesXlsx());
         $('export-tables').addEventListener('click', () => this.tables());
@@ -1579,7 +1666,7 @@ const ExportTool = {
         if (!file) return;
         this.name = file.name.replace(/\.pdf$/i, '');
         await UI.run('Opening document…', async () => {
-            const info = await engine.callJSON('open_doc', 'export', await fileToBytes(file));
+            const info = await engine.openDoc('export', await fileToBytes(file), file.name);
             $('export-workspace').classList.remove('hidden');
             $('export-summary').innerHTML = `<strong>${file.name}</strong> - ${info.pages} page(s)`;
         });
@@ -1593,10 +1680,19 @@ const ExportTool = {
 
     async doc() {
         await UI.run('Building document…', async () => {
+            const b64 = await engine.call('export_docx', 'export');
+            const mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+            download(b64ToBytes(b64), `${this.name}.docx`, mime);
+            this.result('Word document exported. Headings, bold and italic are preserved, ' +
+                        'and the text is fully editable.');
+        });
+    },
+
+    async html() {
+        await UI.run('Building page…', async () => {
             const html = await engine.call('export_html', 'export');
-            // .doc with an HTML payload is what Word opens with layout intact.
-            download(new Blob([html], { type: 'application/msword' }), `${this.name}.doc`);
-            this.result('Word document exported. Open it in Word or Google Docs.');
+            download(new Blob([html], { type: 'text/html' }), `${this.name}.html`);
+            this.result('Web page exported, keeping the original page layout.');
         });
     },
 
@@ -1670,7 +1766,7 @@ const CompareTool = {
                 const file = e.target.files[0];
                 if (!file) return;
                 await UI.run('Loading…', async () => {
-                    await engine.call('open_doc', `cmp${slot}`, await fileToBytes(file));
+                    await engine.openDoc(`cmp${slot}`, await fileToBytes(file), file.name);
                     $(`compare${slot}-name`).textContent = file.name;
                     this.loaded[slot.toLowerCase()] = true;
                     $('compare-run').disabled = !(this.loaded.a && this.loaded.b);
@@ -1737,7 +1833,7 @@ const ScanTool = {
     async open(file) {
         if (!file) return;
         await UI.run('Opening document…', async () => {
-            const info = await engine.callJSON('open_doc', 'scan', await fileToBytes(file));
+            const info = await engine.openDoc('scan', await fileToBytes(file), file.name);
             $('scan-workspace').classList.remove('hidden');
             $('scan-results').innerHTML = '';
             $('scan-actions').classList.add('hidden');
@@ -1802,7 +1898,7 @@ const InspectTool = {
     async open(file) {
         if (!file) return;
         await UI.run('Inspecting document…', async () => {
-            await engine.call('open_doc', 'inspect', await fileToBytes(file));
+            await engine.openDoc('inspect', await fileToBytes(file), file.name);
             const res = await engine.callJSON('inspect', 'inspect');
             $('inspect-workspace').classList.remove('hidden');
             $('inspect-result').classList.add('hidden');
@@ -1856,7 +1952,7 @@ const ReplaceTool = {
     async open(file) {
         if (!file) return;
         await UI.run('Opening document…', async () => {
-            const info = await engine.callJSON('open_doc', 'replace', await fileToBytes(file));
+            const info = await engine.openDoc('replace', await fileToBytes(file), file.name);
             $('replace-workspace').classList.remove('hidden');
             $('replace-result').classList.add('hidden');
             $('replace-summary').innerHTML = `<strong>${file.name}</strong> - ${info.pages} page(s)`;
@@ -1911,7 +2007,7 @@ const AutoSplitTool = {
         if (!file) return;
         this.name = file.name.replace(/\.pdf$/i, '');
         await UI.run('Opening document…', async () => {
-            const info = await engine.callJSON('open_doc', 'autosplit', await fileToBytes(file));
+            const info = await engine.openDoc('autosplit', await fileToBytes(file), file.name);
             $('autosplit-workspace').classList.remove('hidden');
             $('autosplit-result').innerHTML = '';
             $('autosplit-run').disabled = true;
@@ -2045,4 +2141,15 @@ const Tools = [EditTool, PagesTool, SignTool, StampTool, OcrTool,
 engine.boot().catch(() => {});
 
 document.addEventListener('DOMContentLoaded', () => UI.init());
+
+// Keep the engine in Cache Storage rather than leaving it to the HTTP cache,
+// which evicts it often enough that returning visitors paid the full download
+// again. Registered after load so it never competes with the first paint.
+// Harmless where service workers are unavailable (private windows, file://).
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register(`sw.js?v=${APP_VERSION}`).catch(() => {});
+    });
+}
+
 window.PDFSuite = { engine, UI, Tools, TOOL_CARDS };

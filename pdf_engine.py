@@ -19,6 +19,10 @@ import pymupdf
 
 # doc_id -> pymupdf.Document
 _DOCS = {}
+# doc_id -> whether the file was password-protected when it was opened.
+# Recorded once at open time because reading Document.needs_pass on an
+# authenticated document de-authenticates it.
+_WAS_ENCRYPTED = {}
 
 # Base-14 fonts we can always embed. Real documents reference fonts we cannot
 # re-embed from the browser, so editing falls back to the closest of these.
@@ -228,16 +232,23 @@ def open_doc(doc_id, data, password=""):
     """Open a PDF from raw bytes. Returns basic metadata for the UI."""
     close_doc(doc_id)
     doc = pymupdf.open(stream=bytes(data), filetype="pdf")
-    if doc.needs_pass:
+    # Read needs_pass exactly once, here, before authenticating. Touching it
+    # again afterwards silently drops the authentication: every later page read
+    # comes back empty and the saved file is corrupt. Remember the answer
+    # instead, and never ask the document a second time.
+    was_encrypted = bool(doc.needs_pass)
+    if was_encrypted:
         if not password or not doc.authenticate(password):
             doc.close()
             raise ValueError("PASSWORD_REQUIRED")
     _DOCS[doc_id] = doc
+    _WAS_ENCRYPTED[doc_id] = was_encrypted
     return json.dumps(doc_info(doc_id))
 
 
 def close_doc(doc_id):
     doc = _DOCS.pop(doc_id, None)
+    _WAS_ENCRYPTED.pop(doc_id, None)
     if doc is not None:
         doc.close()
     return True
@@ -248,7 +259,7 @@ def doc_info(doc_id):
     meta = doc.metadata or {}
     return {
         "pages": doc.page_count,
-        "encrypted": bool(doc.needs_pass),
+        "encrypted": _WAS_ENCRYPTED.get(doc_id, False),
         "title": meta.get("title") or "",
         "author": meta.get("author") or "",
         "sizes": [
@@ -1099,6 +1110,166 @@ def export_html(doc_id):
     )
 
 
+_DOCX_STYLES_XML = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:docDefaults><w:rPrDefault><w:rPr>
+<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="22"/>
+</w:rPr></w:rPrDefault></w:docDefaults>
+<w:style w:type="paragraph" w:default="1" w:styleId="Normal">
+<w:name w:val="Normal"/>
+<w:pPr><w:spacing w:after="120" w:line="264" w:lineRule="auto"/></w:pPr>
+</w:style>
+<w:style w:type="paragraph" w:styleId="Title">
+<w:name w:val="Title"/><w:basedOn w:val="Normal"/>
+<w:pPr><w:spacing w:before="240" w:after="160"/></w:pPr>
+<w:rPr><w:b/><w:sz w:val="48"/><w:color w:val="1F2427"/></w:rPr>
+</w:style>
+<w:style w:type="paragraph" w:styleId="Heading1">
+<w:name w:val="heading 1"/><w:basedOn w:val="Normal"/>
+<w:pPr><w:outlineLvl w:val="0"/><w:spacing w:before="240" w:after="120"/></w:pPr>
+<w:rPr><w:b/><w:sz w:val="32"/><w:color w:val="21808D"/></w:rPr>
+</w:style>
+<w:style w:type="paragraph" w:styleId="Heading2">
+<w:name w:val="heading 2"/><w:basedOn w:val="Normal"/>
+<w:pPr><w:outlineLvl w:val="1"/><w:spacing w:before="200" w:after="100"/></w:pPr>
+<w:rPr><w:b/><w:sz w:val="26"/><w:color w:val="21808D"/></w:rPr>
+</w:style>
+</w:styles>"""
+
+
+def export_docx(doc_id):
+    """Export to a genuine .docx.
+
+    The previous Word export wrote an HTML payload under a .doc extension,
+    which makes Word open it with a "the format and extension don't match"
+    warning and leaves the result awkward to edit. This builds real
+    WordprocessingML instead, carrying over the things that survive the trip
+    usefully: paragraph breaks, bold and italic, relative text size, and page
+    breaks. Layout-exact conversion is not the goal -- an editable document is.
+    """
+    import zipfile
+
+    def esc(s):
+        return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+
+    doc = _doc(doc_id)
+
+    # Body size is the most common span size in the document; headings are
+    # judged relative to it, so a document set in 9pt is not treated as one
+    # long heading just because another is set in 12pt.
+    sizes = {}
+    for page in doc:
+        for block in page.get_text("dict").get("blocks", []):
+            if block.get("type") != 0:
+                continue
+            for line in block.get("lines", []):
+                for span in line.get("spans", []):
+                    if span.get("text", "").strip():
+                        key = round(float(span.get("size", 11)), 1)
+                        sizes[key] = sizes.get(key, 0) + len(span["text"])
+    body_size = max(sizes, key=sizes.get) if sizes else 11.0
+
+    paragraphs = []
+    for pno, page in enumerate(doc):
+        if pno:
+            paragraphs.append('<w:p><w:r><w:br w:type="page"/></w:r></w:p>')
+        for block in page.get_text("dict").get("blocks", []):
+            if block.get("type") != 0:
+                continue
+            for line in block.get("lines", []):
+                runs = []
+                largest = 0.0
+                for span in line.get("spans", []):
+                    text = span.get("text", "")
+                    if not text:
+                        continue
+                    size = float(span.get("size", body_size))
+                    largest = max(largest, size)
+                    flags = int(span.get("flags", 0))
+                    props = []
+                    if flags & 16:
+                        props.append("<w:b/>")
+                    if flags & 2:
+                        props.append("<w:i/>")
+                    props.append(f'<w:sz w:val="{max(2, int(round(size * 2)))}"/>')
+                    runs.append(
+                        f'<w:r><w:rPr>{"".join(props)}</w:rPr>'
+                        f'<w:t xml:space="preserve">{esc(text)}</w:t></w:r>'
+                    )
+                if not runs:
+                    continue
+                if largest >= body_size * 1.8:
+                    style = "Title"
+                elif largest >= body_size * 1.4:
+                    style = "Heading1"
+                elif largest >= body_size * 1.15:
+                    style = "Heading2"
+                else:
+                    style = "Normal"
+                style_xml = f'<w:pPr><w:pStyle w:val="{style}"/></w:pPr>'
+                paragraphs.append(f"<w:p>{style_xml}{''.join(runs)}</w:p>")
+
+    document_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        f'<w:body>{"".join(paragraphs)}'
+        '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'
+        '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/></w:sectPr>'
+        '</w:body></w:document>'
+    )
+
+    content_types = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+        '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>'
+        '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>'
+        '<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>'
+        '</Types>'
+    )
+    root_rels = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
+        '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>'
+        '<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>'
+        '</Relationships>'
+    )
+    doc_rels = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
+        '</Relationships>'
+    )
+    meta = doc.metadata or {}
+    core_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" '
+        'xmlns:dc="http://purl.org/dc/elements/1.1/">'
+        f'<dc:title>{esc(meta.get("title") or "")}</dc:title>'
+        f'<dc:creator>{esc(meta.get("author") or "MiyeePDF")}</dc:creator>'
+        '</cp:coreProperties>'
+    )
+    app_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties">'
+        '<Application>MiyeePDF</Application></Properties>'
+    )
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", content_types)
+        z.writestr("_rels/.rels", root_rels)
+        z.writestr("word/document.xml", document_xml)
+        z.writestr("word/_rels/document.xml.rels", doc_rels)
+        z.writestr("word/styles.xml", _DOCX_STYLES_XML)
+        z.writestr("docProps/core.xml", core_xml)
+        z.writestr("docProps/app.xml", app_xml)
+    return base64.b64encode(buf.getvalue()).decode()
+
+
 def _find_page_tables(page):
     """Detect tables on a page: ruled borders first, then column alignment.
 
@@ -1597,7 +1768,7 @@ def inspect(doc_id):
         "findings": findings,
         "counts": counts,
         "pages": doc.page_count,
-        "encrypted": bool(doc.needs_pass),
+        "encrypted": _WAS_ENCRYPTED.get(doc_id, False),
     })
 
 

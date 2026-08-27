@@ -26,11 +26,11 @@ Fifteen tools, reachable from a dashboard on the home screen.
 - **Find Sensitive Data** - scan for PAN, GSTIN, Aadhaar, IFSC, card and account numbers, emails, phones and IPs, then permanently redact the ones you choose. Card and Aadhaar numbers are checksum-verified (Luhn and Verhoeff) so ordinary figures are not flagged.
 - **Inspect & Sanitize** - reveal what travels with a PDF beyond its pages (author metadata, XMP, embedded files, JavaScript, hidden layers, annotations, links) and strip it before sharing.
 - **Redact** - remove content from the file rather than covering it, with a selectable box colour.
-- **Password Protect** - AES-256 encryption with per-permission control, and password removal.
+- **Password Protect** - AES-256 encryption with per-permission control, and password removal. Password-protected files can be opened by every tool: you are asked to unlock once, and the rest of the app treats it like any other document.
 
 **Convert**
 - **OCR** - recognise scanned pages and write a real *invisible text layer* back into the PDF, so the output is genuinely searchable.
-- **Export** - Word/HTML, plain text, tables to a formatted Excel workbook (or CSV), embedded images, and page renders to PNG or JPEG.
+- **Export** - a real editable **Word .docx** (headings, bold and italic preserved), a web page, plain text, tables to a formatted Excel workbook (or CSV), embedded images, and page renders to PNG or JPEG.
 
 
 ## Real redaction, real encryption
@@ -48,7 +48,7 @@ MiyeePDF edits the actual document instead:
 
 ## First load
 
-The engine downloads once (about 28 MB) in the background while the page is usable, then the browser caches it, so later visits start quickly.
+The engine downloads once (about 28 MB) in the background while the page is usable. A service worker then keeps it in Cache Storage rather than the ordinary HTTP cache, which is evicted far more readily, so later visits start from disk and the app keeps working with no connection at all.
 
 ## Development
 
@@ -57,6 +57,7 @@ index.html      UI markup
 app.js          UI layer + engine bootstrap (no PDF logic)
 pdf_engine.py   every PDF operation
 style.css       design tokens and components
+sw.js           service worker: offline support and engine caching
 vendor/         PyMuPDF WebAssembly wheel
 ```
 
