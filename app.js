@@ -11,7 +11,7 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.12.0';
+const APP_VERSION = '4.13.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -1537,7 +1537,7 @@ const StampTool = {
 
     init() {
         this.view = new DocView('stamp', { onRender: () => this.drawStamps() });
-        $('stamp-file').addEventListener('change', (e) => this.open(e.target.files[0]));
+        $('stamp-file').addEventListener('change', (e) => this.open(Array.from(e.target.files)));
 
         $$('[data-stampsec]').forEach((btn) => btn.addEventListener('click', () => {
             $$('[data-stampsec]').forEach((b) => b.classList.toggle('active', b === btn));
@@ -1575,10 +1575,47 @@ const StampTool = {
         });
     },
 
-    async open(file) {
-        if (!file) return;
-        this.file = file;
-        await UI.run('Opening document…', () => this.view.load(file));
+    async open(files) {
+        const list = Array.isArray(files) ? files : [files].filter(Boolean);
+        if (!list.length) return;
+        this.files = list;
+        this.file = list[0];
+        this.stamps = [];
+        if (list.length > 1) {
+            // Stamps are placed by clicking a page, so that one sub-panel
+            // cannot work across files. The other four settings can.
+            $('stamp-apply').disabled = true;
+            $('stamp-save').disabled = true;
+            $('stamp-holder').classList.add('hidden');
+            return batchChosen('stamp', list);
+        }
+        $('stamp-apply').disabled = false;
+        $('stamp-save').disabled = false;
+        $('stamp-holder').classList.remove('hidden');
+        $('stamp-summary').classList.add('hidden');
+        $('stamp-result').classList.add('hidden');
+        await UI.run('Opening document…', () => this.view.load(this.file));
+    },
+
+    /** True when the chosen files are to be treated as a batch. */
+    get batching() {
+        return Boolean(this.files && this.files.length > 1);
+    },
+
+    /** Run one stamping operation over every chosen file.
+     *  @param label   what to show while it runs
+     *  @param suffix  appended to each output name inside the ZIP
+     *  @param op      async () => void, the engine call, document already open
+     */
+    runOverFiles(label, suffix, op) {
+        return UI.run(label, () => runBatch({
+            files: this.files, docId: 'stamp', suffix,
+            apply: async (info, file) => {
+                await op(info, file);
+                return engine.call('save', 'stamp');
+            },
+            report: (html) => batchReport('stamp', html),
+        }));
     },
 
     drawStamps() {
@@ -1595,6 +1632,11 @@ const StampTool = {
     },
 
     async applyWatermark() {
+        const watermark = () => engine.call('watermark_text', 'stamp', $('wm-text').value || 'CONFIDENTIAL',
+                                            $('wm-pages').value, Number($('wm-size').value),
+                                            $('wm-color').value, Number($('wm-opacity').value) / 100,
+                                            Number($('wm-rotate').value), $('wm-tiled').checked);
+        if (this.batching) return this.runOverFiles('Watermarking files…', 'watermarked', watermark);
         await UI.run('Applying watermark…', async () => {
             await engine.call('watermark_text', 'stamp', $('wm-text').value || 'CONFIDENTIAL',
                               $('wm-pages').value, Number($('wm-size').value),
@@ -1616,6 +1658,9 @@ const StampTool = {
     },
 
     async applyNumbers() {
+        const number = () => engine.call('page_numbers', 'stamp', $('pn-format').value, $('pn-pos').value,
+                                         Number($('pn-start').value || 1));
+        if (this.batching) return this.runOverFiles('Numbering files…', 'numbered', number);
         await UI.run('Adding page numbers…', async () => {
             await engine.call('page_numbers', 'stamp', $('pn-format').value, $('pn-pos').value,
                               Number($('pn-start').value || 1));
@@ -1630,6 +1675,12 @@ const StampTool = {
             'footer-left': $('hf-fl').value, 'footer-center': $('hf-fc').value, 'footer-right': $('hf-fr').value,
         };
         if (!Object.values(fields).some((v) => v.trim())) return UI.toast('Fill at least one field', 'error');
+        // The document name is one of the fields people substitute into a
+        // header, so in a batch each file gets its own rather than the first.
+        const stampHF = (info, file) => engine.call('header_footer', 'stamp', JSON.stringify(fields),
+                                                    9, '#111111', 28,
+                                                    file.name.replace(/\.pdf$/i, ''));
+        if (this.batching) return this.runOverFiles('Adding header/footer…', 'headed', stampHF);
         await UI.run('Adding header/footer…', async () => {
             await engine.call('header_footer', 'stamp', JSON.stringify(fields), 9, '#111111', 28,
                               (this.file && this.file.name.replace(/\.pdf$/i, '')) || 'document');
@@ -1639,6 +1690,17 @@ const StampTool = {
     },
 
     async applyBates() {
+        if (this.batching) {
+            // Bates numbering is a single unbroken sequence across a bundle,
+            // so the count carries from one file into the next rather than
+            // restarting - that is the whole point of it in a legal filing.
+            let next = Number($('bates-start').value || 1);
+            return this.runOverFiles('Applying Bates numbering…', 'bates', async () => {
+                const n = await engine.call('bates', 'stamp', $('bates-prefix').value, $('bates-suffix').value,
+                                            next, Number($('bates-digits').value || 6), $('bates-pos').value);
+                next += n;
+            });
+        }
         await UI.run('Applying Bates numbering…', async () => {
             const n = await engine.call('bates', 'stamp', $('bates-prefix').value, $('bates-suffix').value,
                                         Number($('bates-start').value || 1), Number($('bates-digits').value || 6),
@@ -1656,6 +1718,91 @@ const StampTool = {
 /* ------------------------------------------------------------------ */
 /* shared OCR                                                          */
 /* ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ */
+/* batch processing                                                    */
+/* ------------------------------------------------------------------ */
+
+/** Apply one tool's operation to several files and hand back a ZIP.
+ *
+ * The tools that qualify are the ones whose settings apply uniformly, with
+ * nothing to point at per document: compressing, protecting, watermarking,
+ * reading, replacing and sanitising. Editing, redacting and signing are left
+ * out on purpose -- each needs you to look at the page in front of you, so a
+ * "do this to twenty files" button would be dishonest.
+ *
+ * @param files    the chosen File objects
+ * @param docId    engine slot to load each one into, in turn
+ * @param suffix   appended to each output name
+ * @param apply    async () => Uint8Array, run once per file with the tool's
+ *                 own settings already on screen
+ * @param report   (html) => void, for progress and the final summary
+ */
+/** Show a tool's workspace in batch form: the settings still apply, but
+ *  there is no single document to preview, so say what will happen instead. */
+function batchChosen(key, files) {
+    const workspace = $(`${key}-workspace`);
+    if (workspace) workspace.classList.remove('hidden');
+    const total = files.reduce((n, f) => n + f.size, 0);
+    const summary = $(`${key}-summary`);
+    if (summary) {
+        summary.classList.remove('hidden');
+        summary.innerHTML =
+            `<strong>${files.length} files</strong> - ${formatSize(total)} in total.<br>` +
+            `<span class="muted">The settings below apply to every one, and you get a ZIP back.</span>`;
+    }
+    batchReport(key, '');
+}
+
+/** Progress and the closing summary, in whichever result box the tool has. */
+function batchReport(key, html) {
+    const box = $(`${key}-result`) || $(`${key}-status`) || $(`${key}-summary`);
+    if (!box) return;
+    box.classList.toggle('hidden', !html);
+    box.innerHTML = html;
+}
+
+async function runBatch({ files, docId, suffix, apply, report = () => {} }) {
+    const zip = new JSZip();
+    const failed = [];
+    let done = 0;
+
+    for (const file of files) {
+        report(`Processing <strong>${file.name}</strong> (${done + 1} of ${files.length})…`);
+        try {
+            const info = await engine.openDoc(docId, await fileToBytes(file), file.name);
+            const bytes = await apply(info, file);
+            const base = file.name.replace(/\.pdf$/i, '');
+            zip.file(`${base}-${suffix}.pdf`, bytes);
+            done++;
+        } catch (err) {
+            // One bad file must not lose the whole run: record why and carry
+            // on, so twenty files do not fail because the third is corrupt or
+            // its password prompt was dismissed.
+            const why = String(err.message || err).includes('CANCELLED')
+                ? 'skipped - no password given'
+                : UI.explain(err);
+            failed.push({ name: file.name, why });
+        }
+    }
+
+    if (!done) {
+        report('<strong>Nothing was produced.</strong><br>' +
+               failed.map((f) => `${f.name}: ${f.why}`).join('<br>'));
+        return { done: 0, failed };
+    }
+
+    report(`Building the ZIP…`);
+    const blob = await zip.generateAsync({ type: 'blob' });
+    download(blob, `${suffix}-${done}-files.zip`, 'application/zip');
+
+    const note = failed.length
+        ? `<br><span class="warn">${failed.length} could not be done:</span><br>` +
+          failed.map((f) => `${f.name} - ${f.why}`).join('<br>')
+        : '';
+    report(`<strong>${done} file(s)</strong> processed and downloaded as a ZIP.${note}`);
+    return { done, failed };
+}
 
 /** Draw a rendered page into a canvas, lifting contrast on the way.
  *
@@ -1805,7 +1952,7 @@ async function recognisePages(docId, pages, lang, onStep = () => {},
 
 const OcrTool = {
     init() {
-        $('ocr-file').addEventListener('change', (e) => this.open(e.target.files[0]));
+        $('ocr-file').addEventListener('change', (e) => this.open(Array.from(e.target.files)));
         $('ocr-run').addEventListener('click', () => this.run());
         $('ocr-save').addEventListener('click', async () => {
             const bytes = await engine.call('save', 'ocr');
@@ -1813,8 +1960,17 @@ const OcrTool = {
         });
     },
 
-    async open(file) {
-        if (!file) return;
+    async open(files) {
+        const list = Array.isArray(files) ? files : [files].filter(Boolean);
+        if (!list.length) return;
+        this.files = list;
+        if (list.length > 1) {
+            this.pages = 0;
+            this.needs = [];
+            $('ocr-save').disabled = true;
+            return batchChosen('ocr', list);
+        }
+        const file = list[0];
         await UI.run('Analysing document…', async () => {
             const info = await engine.openDoc('ocr', await fileToBytes(file), file.name);
             this.pages = info.pages;
@@ -1835,8 +1991,8 @@ const OcrTool = {
 
     async run() {
         const scope = $('ocr-scope').value;
-        const targets = scope === 'all' ? Array.from({ length: this.pages }, (_, i) => i) : this.needs;
-        if (!targets.length) return UI.toast('Nothing to OCR', 'error');
+        const lang = $('ocr-lang').value;
+        const upright = $('ocr-upright').checked;
 
         $('ocr-bar').classList.remove('hidden');
         $('ocr-run').disabled = true;
@@ -1846,9 +2002,36 @@ const OcrTool = {
             if (label) $('ocr-status').textContent = label;
         };
 
+        if (this.files && this.files.length > 1) {
+            // Which pages need reading differs from file to file, so it is
+            // worked out per document rather than from the one on screen.
+            try {
+                await UI.run('Reading files…', () => runBatch({
+                    files: this.files, docId: 'ocr', suffix: 'searchable',
+                    apply: async (info) => {
+                        const pages = [];
+                        for (let i = 0; i < info.pages; i++) {
+                            if (scope === 'all' || await engine.call('needs_ocr', 'ocr', i)) pages.push(i);
+                        }
+                        if (pages.length) await recognisePages('ocr', pages, lang, setProgress, upright);
+                        return engine.call('save', 'ocr');
+                    },
+                    report: (html) => batchReport('ocr', html),
+                }));
+            } finally {
+                $('ocr-run').disabled = false;
+            }
+            return;
+        }
+
+        const targets = scope === 'all' ? Array.from({ length: this.pages }, (_, i) => i) : this.needs;
+        if (!targets.length) {
+            $('ocr-run').disabled = false;
+            return UI.toast('Nothing to OCR', 'error');
+        }
+
         try {
-            const res = await recognisePages('ocr', targets, $('ocr-lang').value,
-                                             setProgress, $('ocr-upright').checked);
+            const res = await recognisePages('ocr', targets, lang, setProgress, upright);
             const note = res.uncertain ? ` ${res.uncertain} word(s) were hard to read.` : '';
             $('ocr-status').textContent =
                 `Done - ${res.pages} page(s) now carry a searchable text layer.${note}`;
@@ -1870,23 +2053,32 @@ const OcrTool = {
 
 const CompressTool = {
     init() {
-        $('compress-file').addEventListener('change', (e) => this.open(e.target.files[0]));
+        $('compress-file').addEventListener('change', (e) => this.open(Array.from(e.target.files)));
         $('compress-run').addEventListener('click', () => this.run());
     },
 
-    async open(file) {
-        if (!file) return;
-        this.file = file;
+    async open(files) {
+        if (!files.length) return;
+        this.files = files;
+        this.file = files[0];
+        if (files.length > 1) return batchChosen('compress', files);
         await UI.run('Opening document…', async () => {
-            const info = await engine.openDoc('compress', await fileToBytes(file), file.name);
+            const info = await engine.openDoc('compress', await fileToBytes(this.file), this.file.name);
             $('compress-workspace').classList.remove('hidden');
             $('compress-result').classList.add('hidden');
             $('compress-summary').innerHTML =
-                `<strong>${file.name}</strong> - ${formatSize(file.size)} · ${info.pages} page(s)`;
+                `<strong>${this.file.name}</strong> - ${formatSize(this.file.size)} · ${info.pages} page(s)`;
         });
     },
 
     async run() {
+        if (this.files && this.files.length > 1) {
+            return UI.run('Compressing files…', () => runBatch({
+                files: this.files, docId: 'compress', suffix: 'compressed',
+                apply: () => engine.call('compress', 'compress', $('compress-level').value),
+                report: (html) => batchReport('compress', html),
+            }));
+        }
         await UI.run('Compressing…', async () => {
             const bytes = await engine.call('compress', 'compress', $('compress-level').value);
             const saved = this.file.size - bytes.length;
@@ -1907,15 +2099,19 @@ const CompressTool = {
 
 const ProtectTool = {
     init() {
-        $('protect-file').addEventListener('change', (e) => this.open(e.target.files[0]));
+        $('protect-file').addEventListener('change', (e) => this.open(Array.from(e.target.files)));
         $('protect-run').addEventListener('click', () => this.encrypt());
         $('protect-remove').addEventListener('click', () => this.decrypt());
     },
 
-    async open(file) {
-        if (!file) return;
-        this.file = file;
+    async open(files) {
+        const list = Array.isArray(files) ? files : [files];
+        if (!list.length || !list[0]) return;
+        this.files = list;
+        this.file = list[0];
+        if (list.length > 1) return batchChosen('protect', list);
         await UI.run('Opening document…', async () => {
+            const file = this.file;
             const bytes = await fileToBytes(file);
             const info = await engine.openDoc('protect', bytes, file.name);
             $('protect-workspace').classList.remove('hidden');
@@ -1927,6 +2123,15 @@ const ProtectTool = {
     async encrypt() {
         const pw = $('protect-user-pw').value;
         if (!pw) return UI.toast('Enter an open password', 'error');
+        const settings = () => engine.call('encrypt', 'protect', pw, $('protect-owner-pw').value,
+                                           $('perm-print').checked, $('perm-copy').checked,
+                                           $('perm-modify').checked, $('perm-annot').checked);
+        if (this.files && this.files.length > 1) {
+            return UI.run('Encrypting files…', () => runBatch({
+                files: this.files, docId: 'protect', suffix: 'protected',
+                apply: settings, report: (html) => batchReport('protect', html),
+            }));
+        }
         await UI.run('Encrypting with AES-256…', async () => {
             const bytes = await engine.call('encrypt', 'protect', pw, $('protect-owner-pw').value,
                                             $('perm-print').checked, $('perm-copy').checked,
@@ -2316,12 +2521,25 @@ const ScanTool = {
 
 const InspectTool = {
     init() {
-        $('inspect-file').addEventListener('change', (e) => this.open(e.target.files[0]));
+        $('inspect-file').addEventListener('change', (e) => this.open(Array.from(e.target.files)));
         $('inspect-clean').addEventListener('click', () => this.clean());
     },
 
-    async open(file) {
-        if (!file) return;
+    async open(files) {
+        const list = Array.isArray(files) ? files : [files].filter(Boolean);
+        if (!list.length) return;
+        this.files = list;
+        if (list.length > 1) {
+            // A findings list belongs to one document; in a batch the chosen
+            // parts are simply stripped from each.
+            $('inspect-findings').innerHTML =
+                '<p class="muted">Findings are listed for a single document. ' +
+                'With several chosen, the parts ticked below are stripped from every one.</p>';
+            $('inspect-counts').innerHTML = '';
+            return batchChosen('inspect', list);
+        }
+        const file = list[0];
+        $('inspect-summary').classList.add('hidden');
         await UI.run('Inspecting document…', async () => {
             await engine.openDoc('inspect', await fileToBytes(file), file.name);
             const res = await engine.callJSON('inspect', 'inspect');
@@ -2346,6 +2564,17 @@ const InspectTool = {
     },
 
     async clean() {
+        const strip = () => engine.callJSON('sanitize', 'inspect',
+            $('san-metadata').checked, $('san-attach').checked, $('san-js').checked,
+            $('san-annots').checked, $('san-links').checked, $('san-forms').checked,
+            $('san-hidden').checked);
+        if (this.files && this.files.length > 1) {
+            return UI.run('Sanitizing files…', () => runBatch({
+                files: this.files, docId: 'inspect', suffix: 'sanitized',
+                apply: async () => { await strip(); return engine.call('save', 'inspect'); },
+                report: (html) => batchReport('inspect', html),
+            }));
+        }
         await UI.run('Sanitizing…', async () => {
             const res = await engine.callJSON('sanitize', 'inspect',
                 $('san-metadata').checked, $('san-attach').checked, $('san-js').checked,
@@ -2369,13 +2598,23 @@ const InspectTool = {
 
 const ReplaceTool = {
     init() {
-        $('replace-file').addEventListener('change', (e) => this.open(e.target.files[0]));
+        $('replace-file').addEventListener('change', (e) => this.open(Array.from(e.target.files)));
         $('replace-preview').addEventListener('click', () => this.preview());
         $('replace-run').addEventListener('click', () => this.run());
     },
 
-    async open(file) {
-        if (!file) return;
+    async open(files) {
+        const list = Array.isArray(files) ? files : [files].filter(Boolean);
+        if (!list.length) return;
+        this.files = list;
+        if (list.length > 1) {
+            // Previewing hits means looking at one document; across a batch
+            // the replacement is applied straight out.
+            $('replace-preview').disabled = true;
+            return batchChosen('replace', list);
+        }
+        $('replace-preview').disabled = false;
+        const file = list[0];
         await UI.run('Opening document…', async () => {
             const info = await engine.openDoc('replace', await fileToBytes(file), file.name);
             $('replace-workspace').classList.remove('hidden');
@@ -2403,6 +2642,19 @@ const ReplaceTool = {
     async run() {
         const find = $('replace-find').value;
         if (!find) return UI.toast('Enter text to find', 'error');
+        if (this.files && this.files.length > 1) {
+            // A file with no match still belongs in the ZIP, unchanged - the
+            // alternative is silently dropping it from the results.
+            return UI.run('Replacing across files…', () => runBatch({
+                files: this.files, docId: 'replace', suffix: 'replaced',
+                apply: async () => {
+                    await engine.call('find_replace', 'replace', find,
+                                      $('replace-with').value, $('replace-pages').value);
+                    return engine.call('save', 'replace');
+                },
+                report: (html) => batchReport('replace', html),
+            }));
+        }
         await UI.run('Replacing…', async () => {
             const n = await engine.call('find_replace', 'replace', find,
                                         $('replace-with').value, $('replace-pages').value);

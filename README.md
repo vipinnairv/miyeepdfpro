@@ -13,14 +13,14 @@ Fifteen tools, reachable from a dashboard on the home screen.
 **Edit**
 - **Edit Text** - tap any line or paragraph and type straight on the page; there is no dialog box. **Undo and redo** (Ctrl+Z / Ctrl+Shift+Z) cover every change, so a mistake no longer means reloading and losing your work. Clear a box to **delete** that text, switch to **Add text** to place new text anywhere, and **zoom** in for precise work on small type. **Scanned PDFs are editable too**: the page is read on the spot, and because the words you see there are pixels rather than text, an edit paints over the scan in its own paper colour (sampled from the page, so white, cream and grey scans all blend) before writing the new wording in. The editor uses the document's *own* embedded font at the page's own size and colour, so what you type is what you get, and the replacement is written back into the file in that same font. Paragraphs rewrap to fit. Plus real PDF annotations and a bookmarks/outline editor.
 - **Fill & Sign** - draw, type or upload a signature; place initials, text, dates and check marks; fill and flatten form fields.
-- **Watermark & Stamps** - watermarks, approval stamps, page numbers, headers/footers and legal **Bates numbering**.
+- **Watermark & Stamps** - watermarks, approval stamps, page numbers, headers/footers and legal **Bates numbering**. Takes several files at once, with Bates numbering running as one sequence across the whole bundle.
 - **Find & Replace** - genuine search-and-replace inside a PDF, each replacement taking the font, size and colour of the text it replaces.
 
 **Organise**
 - **Pages** - merge, split, reorder by drag-and-drop, rotate and delete.
 - **Auto-Split** - cut a combined bundle wherever a marker appears, so each invoice or statement becomes its own file, named from the matched text.
 - **Compare** - word-level diff between two versions, with changes highlighted in a downloadable copy.
-- **Compress** - recompress images and clean the file while text stays real, searchable text.
+- **Compress** - recompress images and clean the file while text stays real, searchable text. Takes several files at once.
 
 **Protect**
 - **Find Sensitive Data** - scan for PAN, GSTIN, Aadhaar, IFSC, card and account numbers, emails, phones and IPs, then permanently redact the ones you choose. Card and Aadhaar numbers are checksum-verified (Luhn and Verhoeff) so ordinary figures are not flagged.
@@ -32,6 +32,24 @@ Fifteen tools, reachable from a dashboard on the home screen.
 - **OCR** - recognise scanned pages and write a real *invisible text layer* back into the PDF, so the output is genuinely searchable. Contrast is lifted before reading, which measurably helps tinted and low-contrast scans; a sideways or upside-down page can be found and turned upright first; and words the reader was unsure of are marked in amber so you can check them rather than trust them silently. The Edit tab can do this in place: open a scan there and it says so, reads the page on request, and then lets you edit it like any other document.
 - **Export** - a real editable **Word .docx** (headings, bold and italic preserved), a web page, plain text, tables to a formatted Excel workbook (or CSV), embedded images, and page renders to PNG or JPEG.
 
+
+## Working on several files at once
+
+Six of the tools accept more than one PDF: **Compress**, **Password Protect**,
+**Watermark & Stamps**, **OCR**, **Find & Replace** and **Inspect & Sanitize**.
+Drop a folder's worth in, set the options once, and you get a ZIP back with
+every file done. A file that cannot be read, or a locked one whose password
+you decline to type, is named in the summary and skipped rather than losing
+the whole run.
+
+Bates numbering treats a batch as one bundle: the sequence carries from the
+last page of one file to the first page of the next, which is what a legal
+filing needs.
+
+The other tools stay single-document on purpose. Editing text, redacting,
+signing, comparing, reordering pages and auto-splitting all need you to look
+at the page in front of you, so a "do this to twenty files" button there would
+be dishonest.
 
 ## Real redaction, real encryption
 
