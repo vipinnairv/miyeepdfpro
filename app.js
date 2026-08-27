@@ -11,7 +11,7 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.8.0';
+const APP_VERSION = '4.9.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -448,9 +448,53 @@ class DocView {
         this.holder = $(`${key}-holder`);
         this.overlay = $(`${key}-overlay`);
 
+        // 0 means fit-to-width; anything else is a multiple of that.
+        this.zoom = 0;
+
         $$(`[data-nav="${key}"]`).forEach((btn) => {
             btn.addEventListener('click', () => this.go(this.page + Number(btn.dataset.dir)));
         });
+        // Scoped by key, like the page-navigation buttons: an unscoped
+        // [data-zoom] selector binds every viewer to one tab's controls, so
+        // zooming here would try to render documents that are not open.
+        $$(`[data-zoom-for="${key}"]`).forEach((btn) => {
+            btn.addEventListener('click', () => this.setZoom(btn.dataset.zoom));
+        });
+    }
+
+    /** Zoom the page. Overlays are positioned in percentages, so they follow
+     *  the image without any recalculation; only the render resolution and the
+     *  holder width change. */
+    async setZoom(action) {
+        const steps = [1, 1.25, 1.5, 2, 3, 4];
+        const current = this.zoom || 1;
+        if (action === 'reset') {
+            this.zoom = 0;
+        } else if (action === 'in') {
+            this.zoom = steps.find((s) => s > current + 0.001) || steps[steps.length - 1];
+        } else if (action === 'out') {
+            const below = steps.filter((s) => s < current - 0.001);
+            this.zoom = below.length ? below[below.length - 1] : 0;
+        } else {
+            this.zoom = Number(action) || 0;
+        }
+        this.applyZoom();
+        // Re-render sharper when magnified, so zooming shows more detail
+        // rather than a bigger blur.
+        await this.render();
+    }
+
+    applyZoom() {
+        if (!this.holder) return;
+        if (this.zoom) {
+            this.holder.style.width = `${this.zoom * 100}%`;
+            this.holder.style.maxWidth = 'none';
+        } else {
+            this.holder.style.width = '';
+            this.holder.style.maxWidth = '';
+        }
+        const label = $(`${this.key}-zoom-level`);
+        if (label) label.textContent = this.zoom ? `${Math.round(this.zoom * 100)}%` : 'Fit';
     }
 
     async load(file) {
@@ -471,7 +515,11 @@ class DocView {
     }
 
     async render() {
-        const png = await engine.call('render_page', this.docId, this.page, 110);
+        // Render at the zoom level so magnifying reveals detail instead of
+        // enlarging the same pixels. Capped so a 4x zoom cannot ask for a
+        // page render big enough to stall the tab.
+        const dpi = Math.round(Math.min(110 * Math.max(this.zoom || 1, 1), 300));
+        const png = await engine.call('render_page', this.docId, this.page, dpi);
         if (this._url) URL.revokeObjectURL(this._url);
         this._url = URL.createObjectURL(new Blob([png], { type: 'image/png' }));
         await new Promise((resolve) => {
@@ -517,9 +565,12 @@ const EditTool = {
             this.mode = btn.dataset.editmode;
             $$('[data-editmode]').forEach((b) => b.classList.toggle('active', b === btn));
             $('edit-hint').textContent =
-                this.mode === 'TEXT' ? 'Tap a highlighted line and type - you edit straight on the page.'
+                this.mode === 'TEXT' ? 'Tap a highlighted line and type - you edit straight on the page. Clear the box to delete the line.'
               : this.mode === 'BLOCK' ? 'Tap a paragraph and rewrite it in place - the text rewraps to fit.'
+              : this.mode === 'ADD' ? 'Tap anywhere on the page to add new text there.'
               : `Drag across the page to add a ${this.mode} annotation.`;
+            $('edit-add-options').classList.toggle('hidden', this.mode !== 'ADD');
+            this.view.overlay.classList.toggle('overlay--add', this.mode === 'ADD');
             this.drawSpans();
         }));
 
@@ -535,6 +586,7 @@ const EditTool = {
 
         $('outline-apply').addEventListener('click', async () => {
             await UI.run('Updating bookmarks…', async () => {
+                await this.mark();
                 const n = await engine.call('set_outline', this.view.docId,
                                             JSON.stringify(this.outline || []));
                 UI.toast(`${n} bookmark(s) applied - save to keep them`, 'success');
@@ -544,7 +596,146 @@ const EditTool = {
         $('edit-save').addEventListener('click', () => this.view.save('edited.pdf'));
         $('edit-search-btn').addEventListener('click', () => this.search());
         $('edit-search').addEventListener('keydown', (e) => { if (e.key === 'Enter') this.search(); });
+
+        $('edit-undo').addEventListener('click', () => this.step('undo'));
+        $('edit-redo').addEventListener('click', () => this.step('redo'));
+
+        // Ctrl+Z / Ctrl+Shift+Z while the Edit tab is showing and nothing is
+        // being typed into - the browser's own undo owns the box while it is.
+        document.addEventListener('keydown', (e) => {
+            if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'z') return;
+            if (!$('edit-tab').classList.contains('active')) return;
+            if (this.editing) return;
+            const el = document.activeElement;
+            if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
+            e.preventDefault();
+            this.step(e.shiftKey ? 'redo' : 'undo');
+        });
+
         this.setupDragAnnotate();
+        this.setupAddText();
+    },
+
+    /* ---- undo / redo ---- */
+
+    /** Take a snapshot before a change, so it can be stepped back. */
+    async mark() {
+        try {
+            await engine.call('snapshot', this.view.docId);
+            await this.refreshHistory();
+        } catch (err) {
+            // History is a convenience; never let it block the edit itself.
+            console.warn('Could not record history', err);
+        }
+    },
+
+    async refreshHistory() {
+        // Never allowed to throw: this runs straight after a successful edit,
+        // and letting it fail would report the edit itself as an error.
+        try {
+            const state = await engine.callJSON('history_state', this.view.docId);
+            $('edit-undo').disabled = !state.undo;
+            $('edit-redo').disabled = !state.redo;
+            return state;
+        } catch (err) {
+            console.warn('Could not read history state', err);
+            return { undo: 0, redo: 0 };
+        }
+    },
+
+    async step(direction) {
+        if (this.editing) this.cancelEdit();
+        await UI.run(direction === 'undo' ? 'Undoing…' : 'Redoing…', async () => {
+            const res = await engine.callJSON(direction, this.view.docId);
+            if (!res.ok) {
+                return UI.toast(direction === 'undo' ? 'Nothing left to undo'
+                                                     : 'Nothing to redo', 'error');
+            }
+            await this.view.render();
+            await this.refreshHistory();
+            UI.toast(direction === 'undo' ? 'Change undone' : 'Change redone', 'success');
+        });
+    },
+
+    /* ---- adding new text ---- */
+
+    setupAddText() {
+        this.view.overlay.addEventListener('click', (e) => {
+            if (this.mode !== 'ADD' || this.editing) return;
+            if (e.target !== this.view.overlay) return;   // ignore existing spans
+            const at = this.view.fracFromEvent(e);
+            this.beginAdd(at.x, at.y);
+        });
+    },
+
+    /** An empty box placed where the page was clicked, styled to match what
+     *  will be written, so adding text looks the same as editing it. */
+    beginAdd(xFrac, yFrac) {
+        if (this.editing) this.commitEdit();
+        const img = this.view.img;
+        const pageWidth = this.view.info.sizes[this.view.page].width;
+        const scale = img.clientWidth / pageWidth;
+        const size = Number($('edit-add-size').value) || 12;
+
+        const el = document.createElement('div');
+        el.className = 'inline-edit';
+        try { el.contentEditable = 'plaintext-only'; } catch (err) { /* fall through */ }
+        if (el.contentEditable !== 'plaintext-only') el.contentEditable = 'true';
+        el.spellcheck = false;
+        el.dataset.placeholder = 'Type here…';
+        el.style.left = `${xFrac * 100}%`;
+        el.style.top = `${yFrac * 100}%`;
+        el.style.width = `${Math.max(10, (1 - xFrac) * 100 - 2)}%`;
+        el.style.fontSize = `${Math.max(size * scale, 7)}px`;
+        el.style.lineHeight = '1.25';
+        el.style.color = $('edit-add-color').value;
+        el.style.fontWeight = $('edit-add-bold').checked ? '700' : '400';
+        el.style.fontStyle = $('edit-add-italic').checked ? 'italic' : 'normal';
+
+        const tag = document.createElement('div');
+        tag.className = 'inline-edit__tag';
+        tag.style.left = `${xFrac * 100}%`;
+        tag.style.top = `${yFrac * 100}%`;
+        tag.textContent = `New text · ${size}pt - Enter to add, Esc to cancel`;
+
+        el.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') { e.preventDefault(); this.cancelEdit(); return; }
+            if (e.key !== 'Enter' || e.shiftKey) return;   // Shift+Enter breaks the line
+            e.preventDefault();
+            this.commitAdd();
+        });
+        el.addEventListener('paste', (e) => {
+            e.preventDefault();
+            const text = (e.clipboardData || window.clipboardData).getData('text');
+            document.execCommand('insertText', false, text);
+        });
+        el.addEventListener('blur', () => this.commitAdd());
+
+        this.editing = { adding: true, el, tag, box: null, done: false, xFrac, yFrac, size };
+        this.view.overlay.append(el, tag);
+        el.focus({ preventScroll: true });
+    },
+
+    async commitAdd() {
+        const ctx = this.editing;
+        if (!ctx || ctx.done || !ctx.adding) return;
+        ctx.done = true;
+        const text = ctx.el.innerText.replace(/ /g, ' ').replace(/\s+$/, '');
+        const widthFrac = ctx.el.offsetWidth / this.view.overlay.clientWidth;
+        this.closeEditor();
+        if (!text.trim()) return;
+
+        await UI.run('Adding text…', async () => {
+            await this.mark();
+            const res = await engine.callJSON(
+                'insert_text', this.view.docId, this.view.page, ctx.xFrac, ctx.yFrac,
+                text, ctx.size, $('edit-add-color').value,
+                $('edit-add-bold').checked, $('edit-add-italic').checked, widthFrac);
+            if (!res.ok) return UI.toast(res.reason || 'Could not add the text', 'error');
+            await this.view.render();
+            await this.refreshHistory();
+            UI.toast('Text added to the page', 'success');
+        });
     },
 
     async open(file) {
@@ -555,8 +746,11 @@ const EditTool = {
             $('edit-doc-info').innerHTML =
                 `<strong>${file.name}</strong><br>${info.pages} page(s) · ${formatSize(file.size)}`;
             $('outline-page').max = info.pages;
+            this.view.zoom = 0;
+            this.view.applyZoom();
             await this.refreshAnnots();
             await this.loadOutline();
+            await this.refreshHistory();
         });
     },
 
@@ -727,6 +921,7 @@ const EditTool = {
     async commitEdit() {
         const ctx = this.editing;
         if (!ctx || ctx.done) return;
+        if (ctx.adding) return this.commitAdd();
         ctx.done = true;
 
         const raw = ctx.el.innerText.replace(/\u00a0/g, ' ').replace(/\s+$/, '');
@@ -735,15 +930,31 @@ const EditTool = {
         const item = ctx.item;
         const isBlock = ctx.isBlock;
         this.closeEditor();
-        if (!next || next === item.text) return;
+        if (next === item.text) return;
 
-        await UI.run(isBlock ? 'Rewriting paragraph…' : 'Replacing text…', async () => {
+        // Emptying the box deletes the text. This used to do nothing at all,
+        // silently, leaving no way to remove a line. Deletion is worth
+        // confirming, because the glyphs really are removed from the file.
+        const deleting = !next.trim();
+        if (deleting) {
+            const what = isBlock ? 'this paragraph' : `"${item.text.slice(0, 60)}"`;
+            if (!confirm(`Delete ${what} from the page?`)) {
+                await this.view.render();
+                return;
+            }
+        }
+
+        await UI.run(deleting ? 'Deleting text…'
+                              : (isBlock ? 'Rewriting paragraph…' : 'Replacing text…'), async () => {
+            await this.mark();
             const res = await engine.callJSON(isBlock ? 'edit_block' : 'edit_text',
                                               this.view.docId, this.view.page, item.bbox,
                                               next, item.font, item.size,
                                               item.colorInt, item.flags,
                                               ...(isBlock ? [true] : []));
             await this.view.render();
+            await this.refreshHistory();
+            if (deleting) return UI.toast('Text deleted from the page', 'success');
             const face = res.exact
                 ? `kept ${item.font}`
                 : 'matched with a similar font';
@@ -812,6 +1023,7 @@ const EditTool = {
             const needsText = this.mode === 'note' || this.mode === 'freetext';
             const text = needsText ? (prompt('Comment text:') || '') : '';
             await UI.run('Adding annotation…', async () => {
+                await this.mark();
                 await engine.call('annotate', this.view.docId, this.view.page, this.mode,
                                   from.x, from.y, end.x, end.y, text, $('edit-annot-color').value);
                 await this.view.render();

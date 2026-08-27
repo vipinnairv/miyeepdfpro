@@ -13,14 +13,14 @@
 
     <!-- SVG first for modern browsers; .ico covers older ones and the
          automatic /favicon.ico request. -->
-    <link rel="icon" href="favicon.svg?v=4.8.0" type="image/svg+xml">
-    <link rel="icon" href="favicon.ico?v=4.8.0" sizes="16x16 32x32 48x48">
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.8.0">
-    <link rel="manifest" href="site.webmanifest?v=4.8.0">
+    <link rel="icon" href="favicon.svg?v=4.9.0" type="image/svg+xml">
+    <link rel="icon" href="favicon.ico?v=4.9.0" sizes="16x16 32x32 48x48">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.9.0">
+    <link rel="manifest" href="site.webmanifest?v=4.9.0">
 
     <!-- ?v= busts the browser cache on redeploy: without it a stale app.js/style.css
          pair silently breaks the page. Bump APP_VERSION in app.js to match. -->
-    <link rel="stylesheet" href="style.css?v=4.8.0">
+    <link rel="stylesheet" href="style.css?v=4.9.0">
     <script src="https://cdn.jsdelivr.net/pyodide/v314.0.5/full/pyodide.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
@@ -29,7 +29,7 @@
     <header class="header">
         <div class="header__content">
             <h1 class="header__title">
-                <img class="header__logo" src="logo.svg?v=4.8.0" alt="" width="34" height="34">
+                <img class="header__logo" src="logo.svg?v=4.9.0" alt="" width="34" height="34">
                 MiyeePDF <span class="header__byline">Built by Vipin Nair</span>
             </h1>
             <div class="header__right">
@@ -120,8 +120,21 @@
                             <button class="btn btn--sm" data-nav="edit" data-dir="1" aria-label="Next page">▶</button>
                         </div>
                         <div class="tool-group">
+                            <button class="btn btn--sm" id="edit-undo" disabled
+                                    aria-label="Undo" title="Undo (Ctrl+Z)">↶ Undo</button>
+                            <button class="btn btn--sm" id="edit-redo" disabled
+                                    aria-label="Redo" title="Redo (Ctrl+Shift+Z)">↷ Redo</button>
+                        </div>
+                        <div class="tool-group">
+                            <button class="btn btn--sm" data-zoom="out" data-zoom-for="edit" aria-label="Zoom out" title="Zoom out">−</button>
+                            <span class="page-indicator" id="edit-zoom-level">Fit</span>
+                            <button class="btn btn--sm" data-zoom="in" data-zoom-for="edit" aria-label="Zoom in" title="Zoom in">+</button>
+                            <button class="btn btn--sm" data-zoom="reset" data-zoom-for="edit" title="Fit to width">Fit</button>
+                        </div>
+                        <div class="tool-group">
                             <button class="mode-btn active" data-editmode="TEXT">✏️ Line</button>
                             <button class="mode-btn" data-editmode="BLOCK">¶ Paragraph</button>
+                            <button class="mode-btn" data-editmode="ADD">➕ Add text</button>
                             <button class="mode-btn" data-editmode="highlight">🖍️ Highlight</button>
                             <button class="mode-btn" data-editmode="underline">U̲ Underline</button>
                             <button class="mode-btn" data-editmode="strikeout">S̶ Strikeout</button>
@@ -130,6 +143,14 @@
                         </div>
                         <div class="tool-group">
                             <label class="tool-option">Colour <input type="color" id="edit-annot-color" value="#ffd400"></label>
+                        </div>
+                        <div class="tool-group hidden" id="edit-add-options">
+                            <label class="tool-option">Size
+                                <input type="number" id="edit-add-size" class="form-control form-control--tiny"
+                                       value="12" min="4" max="96"></label>
+                            <label class="tool-option">Colour <input type="color" id="edit-add-color" value="#000000"></label>
+                            <label class="tool-option"><input type="checkbox" id="edit-add-bold"> Bold</label>
+                            <label class="tool-option"><input type="checkbox" id="edit-add-italic"> Italic</label>
                         </div>
                     </div>
                     <p class="hint" id="edit-hint">Tap any highlighted text and type - you edit straight on the page, in the page&#39;s own font. Switch modes above to annotate instead.</p>
@@ -876,6 +897,6 @@
         </div>
     </footer>
 
-    <script src="app.js?v=4.8.0"></script>
+    <script src="app.js?v=4.9.0"></script>
 </body>
 </html>

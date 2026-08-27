@@ -24,6 +24,21 @@ _DOCS = {}
 # authenticated document de-authenticates it.
 _WAS_ENCRYPTED = {}
 
+# doc_id -> {"undo": [bytes], "redo": [bytes]}
+#
+# Editing a PDF is destructive: replacing text deletes the original glyphs, so
+# without this a mistyped edit could only be escaped by reloading the file and
+# losing every other change. Whole-document snapshots are the honest way to
+# store that -- an edit can touch fonts, the xref table and several objects at
+# once, so a diff of "what changed" would be its own error-prone machine.
+#
+# Snapshots are capped by count *and* by total bytes, because this runs in the
+# browser's memory: a 20 MB scan would otherwise put 240 MB of history beside
+# it and take the tab down.
+_HISTORY = {}
+_HISTORY_STEPS = 12
+_HISTORY_BUDGET = 64 * 1024 * 1024
+
 # Base-14 fonts we can always embed. Real documents reference fonts we cannot
 # re-embed from the browser, so editing falls back to the closest of these.
 # Each family lists (regular, bold, italic, bold-italic) - PyMuPDF uses fixed
@@ -249,9 +264,91 @@ def open_doc(doc_id, data, password=""):
 def close_doc(doc_id):
     doc = _DOCS.pop(doc_id, None)
     _WAS_ENCRYPTED.pop(doc_id, None)
+    _HISTORY.pop(doc_id, None)
     if doc is not None:
         doc.close()
     return True
+
+
+# --------------------------------------------------------------------------
+# undo / redo
+# --------------------------------------------------------------------------
+
+def _trim_history(entry):
+    """Keep history inside both caps, dropping the oldest states first."""
+    while len(entry["undo"]) > _HISTORY_STEPS:
+        entry["undo"].pop(0)
+    while (len(entry["undo"]) > 1
+           and sum(len(b) for b in entry["undo"]) > _HISTORY_BUDGET):
+        entry["undo"].pop(0)
+
+
+def _serialise(doc_id):
+    """A restorable copy of the current document.
+
+    Deliberately not garbage-collected or cleaned: this is a throwaway
+    snapshot, and the tidying passes are the slow part of saving.
+    """
+    return _doc(doc_id).tobytes(garbage=0, deflate=True)
+
+
+def _restore(doc_id, data):
+    """Swap the working document for a snapshot, keeping the id valid."""
+    old = _DOCS.get(doc_id)
+    _DOCS[doc_id] = pymupdf.open(stream=bytes(data), filetype="pdf")
+    if old is not None:
+        old.close()
+
+
+def snapshot(doc_id):
+    """Record the current state so the next change can be undone.
+
+    Called before a mutation, not after, so the stack holds the states to go
+    back *to*. Any new change clears the redo stack, as in every editor.
+    """
+    if doc_id not in _DOCS:
+        return False
+    entry = _HISTORY.setdefault(doc_id, {"undo": [], "redo": []})
+    try:
+        entry["undo"].append(_serialise(doc_id))
+    except Exception:
+        return False       # never let bookkeeping break the actual edit
+    entry["redo"].clear()
+    _trim_history(entry)
+    return True
+
+
+def history_state(doc_id):
+    """What the undo and redo buttons should show."""
+    entry = _HISTORY.get(doc_id) or {"undo": [], "redo": []}
+    return json.dumps({"undo": len(entry["undo"]), "redo": len(entry["redo"])})
+
+
+def undo(doc_id):
+    """Step back one change. Returns the new history state."""
+    entry = _HISTORY.get(doc_id)
+    if not entry or not entry["undo"]:
+        return json.dumps({"ok": False, "undo": 0,
+                           "redo": len(entry["redo"]) if entry else 0})
+    current = _serialise(doc_id)
+    _restore(doc_id, entry["undo"].pop())
+    entry["redo"].append(current)
+    return json.dumps({"ok": True, "undo": len(entry["undo"]),
+                       "redo": len(entry["redo"])})
+
+
+def redo(doc_id):
+    """Step forward again after an undo."""
+    entry = _HISTORY.get(doc_id)
+    if not entry or not entry["redo"]:
+        return json.dumps({"ok": False, "redo": 0,
+                           "undo": len(entry["undo"]) if entry else 0})
+    current = _serialise(doc_id)
+    _restore(doc_id, entry["redo"].pop())
+    entry["undo"].append(current)
+    _trim_history(entry)
+    return json.dumps({"ok": True, "undo": len(entry["undo"]),
+                       "redo": len(entry["redo"])})
 
 
 def doc_info(doc_id):
@@ -373,6 +470,51 @@ def edit_text(doc_id, pno, bbox, new_text, font_name="", size=0, color_int=0, fl
     )
     return json.dumps({"ok": True, "font": font_name if exact else _pick_font(font_name, int(flags or 0)),
                        "exact": exact, "size": round(size, 1)})
+
+
+def insert_text(doc_id, pno, x_frac, y_frac, text, size=12, color="#000000",
+                bold=False, italic=False, width_frac=0.0):
+    """Add new text at a point on the page.
+
+    Editing existing text was the only way to change a document, so anything
+    the original did not already say could not be added at all. The text is
+    written as real text, not an annotation, so it is selectable and
+    searchable like the rest of the page.
+
+    A width hint wraps the text into a box; without one it is a single line.
+    """
+    doc = _doc(doc_id)
+    page = doc[int(pno)]
+    text = str(text or "")
+    if not text.strip():
+        return json.dumps({"ok": False, "reason": "Nothing to add."})
+
+    flags = (16 if bold else 0) | (2 if italic else 0)
+    font = _pick_font("", flags)
+    size = max(float(size or 12), 1.0)
+    rgb = _hex_to_rgb(color)
+    pw, ph = page.rect.width, page.rect.height
+    x = max(0.0, min(float(x_frac), 1.0)) * pw
+    y = max(0.0, min(float(y_frac), 1.0)) * ph
+
+    wrap = float(width_frac or 0) * pw
+    if wrap > size or "\n" in text:
+        # Wrapped: give it room below and let PyMuPDF reflow inside the box.
+        box = pymupdf.Rect(x, y, min(x + (wrap or pw - x), pw), ph)
+        leftover = page.insert_textbox(box, text, fontsize=size, fontname=font,
+                                       color=rgb, align=0)
+        if leftover < 0:      # did not fit: shrink until it does
+            for trial in (size * 0.9, size * 0.8, size * 0.7, size * 0.6):
+                if page.insert_textbox(box, text, fontsize=trial, fontname=font,
+                                       color=rgb, align=0) >= 0:
+                    size = trial
+                    break
+    else:
+        # insert_text places the baseline; the click should feel like the top
+        # of the text, so drop by roughly the ascender.
+        page.insert_text((x, y + size * 0.82), text, fontsize=size,
+                         fontname=font, color=rgb)
+    return json.dumps({"ok": True, "size": round(size, 1)})
 
 
 def search_text(doc_id, needle):
