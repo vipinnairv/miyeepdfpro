@@ -1070,35 +1070,111 @@ def _sample_background(page, rect):
         return (1, 1, 1)
 
 
-def insert_ocr_layer(doc_id, pno, words_json, img_width, img_height):
+def _ocr_word_size(font, text, width_pt, fallback):
+    """Font size at which `text` is exactly `width_pt` wide.
+
+    Fitting the width is how the OCR layer earns its alignment. Sizing from
+    the word's ink height instead -- what this used to do -- reads the
+    x-height of "one", the cap height of "NON" and the full ascender-to-
+    descender span of "Gujarat" as if they were the same measurement, so
+    neighbouring words on one line came out at noticeably different sizes and
+    none of them matched the scan.
+    """
+    if not text or width_pt <= 0:
+        return fallback
+    try:
+        unit = font.text_length(text, 10)
+    except Exception:
+        return fallback
+    if unit <= 0:
+        return fallback
+    return 10.0 * width_pt / unit
+
+
+def insert_ocr_layer(doc_id, pno, payload_json, img_width, img_height):
     """Insert recognised words as invisible, selectable text.
 
-    `words_json` carries Tesseract.js output in image-pixel coordinates; they are
-    scaled to PDF points and drawn with render_mode=3 (invisible) so the page
-    still *looks* like the scan but is fully searchable and copyable.
+    The payload carries Tesseract output in image-pixel coordinates, either as
+    lines of words (preferred) or a flat word list. Text is drawn with
+    render_mode=3 so the page still *looks* like the scan while being
+    searchable, copyable and -- since the editor reads these spans -- editable.
+
+    Two things decide whether the layer lands on the ink:
+
+    * the baseline. Tesseract reports one per word and per line; using it is
+      exact, where deriving it from the bottom of the ink box is only right
+      for words that happen to have no descender.
+    * the size, fitted to each word's width (see above), then made uniform
+      across the line so one odd fragment cannot leave a line ragged.
     """
     page = _doc(doc_id)[int(pno)]
-    words = json.loads(words_json) if isinstance(words_json, str) else words_json
+    payload = json.loads(payload_json) if isinstance(payload_json, str) else payload_json
     sx = page.rect.width / float(img_width)
     sy = page.rect.height / float(img_height)
+    # The page origin is not always (0, 0): a cropped page shifts everything,
+    # and text placed without the offset lands off the ink by that margin.
+    ox, oy = page.rect.x0, page.rect.y0
+
+    # Accept either shape, so a caller passing a plain word list still works.
+    if isinstance(payload, dict):
+        lines = payload.get("lines") or []
+    elif payload and isinstance(payload[0], dict) and "words" in payload[0]:
+        lines = payload
+    else:
+        lines = [{"words": payload or []}]
+
+    font = pymupdf.Font("helv")
     added = 0
-    # Remember that this page's text came from a scan. Editing it later has to
-    # paint over the image, since the words a reader sees are pixels and the
-    # layer added here is invisible.
     _OCR_PAGES.setdefault(doc_id, set()).add(int(pno))
 
-    for word in words:
-        text = (word.get("text") or "").strip()
-        if not text:
+    for line in lines:
+        words = [w for w in (line.get("words") or []) if (w.get("text") or "").strip()]
+        if not words:
             continue
-        b = word.get("bbox") or {}
-        x0, y0 = float(b.get("x0", 0)) * sx, float(b.get("y0", 0)) * sy
-        x1, y1 = float(b.get("x1", 0)) * sx, float(b.get("y1", 0)) * sy
-        height = max(y1 - y0, 1)
-        size = _fit_size(text, "helv", height * 0.95, max(x1 - x0, 1))
-        page.insert_text((x0, y1 - height * 0.18), text, fontsize=size,
-                         fontname="helv", render_mode=3)
-        added += 1
+        line_base = ((line.get("baseline") or {}).get("y0")
+                     if (line.get("baseline") or {}).get("has_baseline") else None)
+
+        placed = []
+        for word in words:
+            text = (word.get("text") or "").strip()
+            b = word.get("bbox") or {}
+            x0 = float(b.get("x0", 0)) * sx + ox
+            x1 = float(b.get("x1", 0)) * sx + ox
+            y0 = float(b.get("y0", 0)) * sy + oy
+            y1 = float(b.get("y1", 0)) * sy + oy
+            wb = word.get("baseline") or {}
+            base_px = wb.get("y0") if wb.get("has_baseline") else line_base
+            if base_px is None:
+                # No baseline reported: the bottom of the ink is the closest
+                # honest guess, nudged up for a possible descender.
+                baseline = y1 - (y1 - y0) * 0.18
+            else:
+                baseline = float(base_px) * sy + oy
+            size = _ocr_word_size(font, text, x1 - x0, max(y1 - y0, 1) * 0.95)
+            placed.append({"text": text, "x0": x0, "x1": x1,
+                           "baseline": baseline, "size": size})
+
+        # One size for the line. The median resists a stray mark or a single
+        # character, whose width says little about the type around it.
+        sizes = sorted(p["size"] for p in placed if len(p["text"]) > 1) or \
+                sorted(p["size"] for p in placed)
+        line_size = sizes[len(sizes) // 2]
+
+        for p in placed:
+            size = line_size
+            # Keep a word inside its own box: at the shared size a long word
+            # could otherwise run over its neighbour and scramble selection.
+            width = max(p["x1"] - p["x0"], 0.1)
+            try:
+                if font.text_length(p["text"], size) > width * 1.15:
+                    size = _ocr_word_size(font, p["text"], width, size)
+            except Exception:
+                pass
+            if size <= 0.4:
+                continue
+            page.insert_text((p["x0"], p["baseline"]), p["text"],
+                             fontsize=size, fontname="helv", render_mode=3)
+            added += 1
     return added
 
 

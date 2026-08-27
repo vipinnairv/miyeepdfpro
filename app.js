@@ -11,7 +11,7 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.10.0';
+const APP_VERSION = '4.11.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -1672,8 +1672,19 @@ async function recognisePages(docId, pages, lang, onStep = () => {}) {
             try {
                 const { data } = await worker.recognize(url);
                 const bitmap = await createImageBitmap(blob);
-                const words = (data.words || []).map((w) => ({ text: w.text, bbox: w.bbox }));
-                await engine.call('insert_ocr_layer', docId, pno, JSON.stringify(words),
+                // Send lines with their baselines, not a flat word list: the
+                // baseline is what puts the text layer on the ink, and a line
+                // gives the engine enough context to size its words alike.
+                const lines = (data.lines || []).map((ln) => ({
+                    baseline: ln.baseline,
+                    words: (ln.words || []).map((w) => ({
+                        text: w.text, bbox: w.bbox, baseline: w.baseline,
+                    })),
+                }));
+                const payload = lines.length
+                    ? { lines }
+                    : { lines: [{ words: (data.words || []).map((w) => ({ text: w.text, bbox: w.bbox, baseline: w.baseline })) }] };
+                await engine.call('insert_ocr_layer', docId, pno, JSON.stringify(payload),
                                   bitmap.width, bitmap.height);
             } finally {
                 URL.revokeObjectURL(url);
