@@ -29,7 +29,7 @@ Fifteen tools, reachable from a dashboard on the home screen.
 - **Password Protect** - AES-256 encryption with per-permission control, and password removal. Password-protected files can be opened by every tool: you are asked to unlock once, and the rest of the app treats it like any other document.
 
 **Convert**
-- **OCR** - recognise scanned pages and write a real *invisible text layer* back into the PDF, so the output is genuinely searchable. The Edit tab can do this in place: open a scan there and it says so, reads the page on request, and then lets you edit it like any other document.
+- **OCR** - recognise scanned pages and write a real *invisible text layer* back into the PDF, so the output is genuinely searchable. Contrast is lifted before reading, which measurably helps tinted and low-contrast scans; a sideways or upside-down page can be found and turned upright first; and words the reader was unsure of are marked in amber so you can check them rather than trust them silently. The Edit tab can do this in place: open a scan there and it says so, reads the page on request, and then lets you edit it like any other document.
 - **Export** - a real editable **Word .docx** (headings, bold and italic preserved), a web page, plain text, tables to a formatted Excel workbook (or CSV), embedded images, and page renders to PNG or JPEG.
 
 

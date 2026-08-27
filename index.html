@@ -13,14 +13,14 @@
 
     <!-- SVG first for modern browsers; .ico covers older ones and the
          automatic /favicon.ico request. -->
-    <link rel="icon" href="favicon.svg?v=4.11.0" type="image/svg+xml">
-    <link rel="icon" href="favicon.ico?v=4.11.0" sizes="16x16 32x32 48x48">
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.11.0">
-    <link rel="manifest" href="site.webmanifest?v=4.11.0">
+    <link rel="icon" href="favicon.svg?v=4.12.0" type="image/svg+xml">
+    <link rel="icon" href="favicon.ico?v=4.12.0" sizes="16x16 32x32 48x48">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.12.0">
+    <link rel="manifest" href="site.webmanifest?v=4.12.0">
 
     <!-- ?v= busts the browser cache on redeploy: without it a stale app.js/style.css
          pair silently breaks the page. Bump APP_VERSION in app.js to match. -->
-    <link rel="stylesheet" href="style.css?v=4.11.0">
+    <link rel="stylesheet" href="style.css?v=4.12.0">
     <script src="https://cdn.jsdelivr.net/pyodide/v314.0.5/full/pyodide.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
@@ -29,7 +29,7 @@
     <header class="header">
         <div class="header__content">
             <h1 class="header__title">
-                <img class="header__logo" src="logo.svg?v=4.11.0" alt="" width="34" height="34">
+                <img class="header__logo" src="logo.svg?v=4.12.0" alt="" width="34" height="34">
                 MiyeePDF <span class="header__byline">Built by Vipin Nair</span>
             </h1>
             <div class="header__right">
@@ -179,6 +179,9 @@
                             </label>
                             <label class="tool-option">
                                 <input type="checkbox" id="edit-scan-all"> All pages
+                            </label>
+                            <label class="tool-option" title="Slower: checks each page for a sideways or upside-down scan first">
+                                <input type="checkbox" id="edit-scan-upright"> Fix sideways pages
                             </label>
                             <button class="btn btn--primary btn--sm" id="edit-scan-ocr">Make this page editable</button>
                         </div>
@@ -489,6 +492,12 @@
                         <label class="form-label">Language</label>
                         <select id="ocr-lang" class="form-control">
                             <option value="eng" selected>English</option>
+                            <option value="eng+hin">English + Hindi</option>
+                            <option value="hin">Hindi</option>
+                            <option value="eng+guj">English + Gujarati</option>
+                            <option value="eng+mar">English + Marathi</option>
+                            <option value="eng+tam">English + Tamil</option>
+                            <option value="eng+tel">English + Telugu</option>
                             <option value="fra">French</option>
                             <option value="deu">German</option>
                             <option value="spa">Spanish</option>
@@ -500,6 +509,11 @@
                             <option value="auto" selected>Only pages that need it</option>
                             <option value="all">All pages</option>
                         </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="tool-option" title="Slower: checks each page for a sideways or upside-down scan first">
+                            <input type="checkbox" id="ocr-upright"> Fix sideways pages
+                        </label>
                     </div>
                 </div>
                 <div class="progress-bar hidden" id="ocr-bar">
@@ -931,6 +945,6 @@
         </div>
     </footer>
 
-    <script src="app.js?v=4.11.0"></script>
+    <script src="app.js?v=4.12.0"></script>
 </body>
 </html>

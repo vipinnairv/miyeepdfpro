@@ -11,7 +11,7 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.11.0';
+const APP_VERSION = '4.12.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -678,12 +678,16 @@ const EditTool = {
 
         try {
             await this.mark();
-            const done = await recognisePages(this.view.docId, pages,
-                                              $('edit-scan-lang').value, setProgress);
+            const res = await recognisePages(this.view.docId, pages,
+                                             $('edit-scan-lang').value, setProgress,
+                                             $('edit-scan-upright').checked);
             await this.view.render();
             await this.refreshHistory();
-            status.textContent = `${done} page(s) read - tap any line to edit it.`;
-            UI.toast(`Read ${done} page(s) - the text is editable now`, 'success');
+            const note = res.uncertain
+                ? ` ${res.uncertain} word(s) were hard to read and are marked in amber.`
+                : '';
+            status.textContent = `${res.pages} page(s) read - tap any line to edit it.${note}`;
+            UI.toast(`Read ${res.pages} page(s) - the text is editable now`, 'success');
         } catch (err) {
             console.error(err);
             status.textContent = `Could not read the page: ${UI.explain(err)}`;
@@ -842,14 +846,28 @@ const EditTool = {
         const isBlock = this.mode === 'BLOCK';
         this.spans = await engine.callJSON(isBlock ? 'get_blocks' : 'get_spans',
                                            this.view.docId, this.view.page);
+        // Words the reader was unsure of, so they can be pointed at rather
+        // than sitting on the page looking as settled as everything else.
+        let doubts = [];
+        try {
+            doubts = await engine.callJSON('ocr_doubts', this.view.docId, this.view.page);
+        } catch (err) { /* nothing recorded for this page */ }
         this.spans.forEach((item, index) => {
             const el = document.createElement('div');
             el.className = isBlock ? 'span-box span-box--block' : 'span-box';
+            // Overlap test against the low-confidence list: a doubtful word
+            // marks the span it sits in.
+            const shaky = doubts.find((d) =>
+                d.xFrac < item.xFrac + item.wFrac && d.xFrac + d.wFrac > item.xFrac &&
+                d.yFrac < item.yFrac + item.hFrac && d.yFrac + d.hFrac > item.yFrac);
+            if (shaky) el.classList.add('span-box--doubt');
             el.style.cssText = `left:${item.xFrac * 100}%;top:${item.yFrac * 100}%;` +
                                `width:${item.wFrac * 100}%;height:${item.hFrac * 100}%`;
-            el.title = isBlock
-                ? `Paragraph · ${item.lines} line(s) - tap to rewrite in place`
-                : `${item.font} ${item.size}pt - tap to edit in place`;
+            el.title = shaky
+                ? `Read as "${shaky.text}" but only ${shaky.conf}% sure - worth checking`
+                : isBlock
+                    ? `Paragraph · ${item.lines} line(s) - tap to rewrite in place`
+                    : `${item.font} ${item.size}pt - tap to edit in place`;
             el.addEventListener('click', (e) => this.beginEdit(index, el, e));
             overlay.appendChild(el);
         });
@@ -1639,6 +1657,66 @@ const StampTool = {
 /* shared OCR                                                          */
 /* ------------------------------------------------------------------ */
 
+/** Draw a rendered page into a canvas, lifting contrast on the way.
+ *
+ * Measured on a real scan: raising contrast on a greyscale copy took a
+ * stamp-paper page from 56% confidence to 68%, and 77 to 82 confidently read
+ * words, while a clean page was unaffected. Hard binarisation was tried too
+ * and was no better than the raw image, so it is not used.
+ */
+async function preprocessForOcr(pngBytes, rotate = 0) {
+    const blob = new Blob([pngBytes], { type: 'image/png' });
+    const bmp = await createImageBitmap(blob);
+    const swap = rotate === 90 || rotate === 270;
+    const canvas = document.createElement('canvas');
+    canvas.width = swap ? bmp.height : bmp.width;
+    canvas.height = swap ? bmp.width : bmp.height;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.save();
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    if (rotate) ctx.rotate((rotate * Math.PI) / 180);
+    ctx.drawImage(bmp, -bmp.width / 2, -bmp.height / 2);
+    ctx.restore();
+    bmp.close?.();
+
+    const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+        const grey = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+        const lifted = Math.max(0, Math.min(255, (grey - 128) * 1.6 + 128));
+        d[i] = d[i + 1] = d[i + 2] = lifted;
+    }
+    ctx.putImageData(img, 0, 0);
+    const out = await new Promise((r) => canvas.toBlob(r, 'image/png'));
+    return { blob: out, width: canvas.width, height: canvas.height };
+}
+
+/** Which way up is this page?
+ *
+ * Tesseract's own orientation detection returns nothing in this build, but
+ * confidence separates the cases cleanly on its own: the same page scored 89
+ * upright against 45, 36 and 45 at the three wrong turns. The probe runs at
+ * low resolution, so picking the orientation costs a fraction of the real
+ * read that follows.
+ */
+async function detectOrientation(worker, pngBytes, onStep = () => {}) {
+    let best = { angle: 0, confidence: -1 };
+    for (const angle of [0, 90, 180, 270]) {
+        onStep(null, `Checking orientation (${angle}\u00b0)…`);
+        const { blob } = await preprocessForOcr(pngBytes, angle);
+        const url = URL.createObjectURL(blob);
+        try {
+            const { data } = await worker.recognize(url);
+            if ((data.confidence || 0) > best.confidence) {
+                best = { angle, confidence: data.confidence || 0 };
+            }
+        } finally {
+            URL.revokeObjectURL(url);
+        }
+    }
+    return best;
+}
+
 /** Recognise pages and write an invisible text layer back into the document.
  *
  * Shared by the OCR tab and the Edit tab: a scanned page has no text objects
@@ -1648,8 +1726,11 @@ const StampTool = {
  * @param pages    page indices to read
  * @param lang     Tesseract language code(s), e.g. "eng" or "eng+hin"
  * @param onStep   (pct, label) progress callback
+ * @param checkOrientation  probe which way up each page is first
+ * @returns {{pages: number, uncertain: number}}
  */
-async function recognisePages(docId, pages, lang, onStep = () => {}) {
+async function recognisePages(docId, pages, lang, onStep = () => {},
+                              checkOrientation = false) {
     onStep(0, 'Loading the reader…');
     const worker = await Tesseract.createWorker(lang, 1, {
         // The language pack is ~11 MB on first use. Without this the UI sits
@@ -1663,36 +1744,60 @@ async function recognisePages(docId, pages, lang, onStep = () => {}) {
     });
     try {
         let done = 0;
+        let uncertain = 0;
         for (const pno of pages) {
             onStep(Math.round((done / pages.length) * 100), `Reading page ${pno + 1}…`);
+
+            // A sideways page reads as nonsense, so check which way is up
+            // before the real pass -- cheaply, at low resolution, and only
+            // when asked, since most pages are already upright.
+            if (checkOrientation) {
+                const probe = await engine.call('render_page', docId, pno, 90);
+                const best = await detectOrientation(worker, probe, onStep);
+                if (best.angle) {
+                    // Rotate the page itself rather than the image: only the
+                    // /Rotate entry changes, so the scan is not re-encoded,
+                    // and everything after this sees an upright page.
+                    //
+                    // The angle is added, not subtracted. The probe rotates an
+                    // image that already reflects the page's current rotation,
+                    // so the turn that made it readable is the turn the page
+                    // still needs; negating it lands 180 degrees out, which is
+                    // portrait and upside down, and reads as badly as sideways.
+                    await engine.call('set_page_rotation', docId, pno, best.angle);
+                }
+            }
+
             // Render high: recognition accuracy follows input resolution.
             const png = await engine.call('render_page', docId, pno, 200);
-            const blob = new Blob([png], { type: 'image/png' });
+            const { blob, width, height } = await preprocessForOcr(png);
             const url = URL.createObjectURL(blob);
             try {
                 const { data } = await worker.recognize(url);
-                const bitmap = await createImageBitmap(blob);
                 // Send lines with their baselines, not a flat word list: the
                 // baseline is what puts the text layer on the ink, and a line
                 // gives the engine enough context to size its words alike.
+                const asWord = (w) => ({
+                    text: w.text, bbox: w.bbox, baseline: w.baseline,
+                    confidence: w.confidence,
+                });
                 const lines = (data.lines || []).map((ln) => ({
                     baseline: ln.baseline,
-                    words: (ln.words || []).map((w) => ({
-                        text: w.text, bbox: w.bbox, baseline: w.baseline,
-                    })),
+                    words: (ln.words || []).map(asWord),
                 }));
                 const payload = lines.length
                     ? { lines }
-                    : { lines: [{ words: (data.words || []).map((w) => ({ text: w.text, bbox: w.bbox, baseline: w.baseline })) }] };
-                await engine.call('insert_ocr_layer', docId, pno, JSON.stringify(payload),
-                                  bitmap.width, bitmap.height);
+                    : { lines: [{ words: (data.words || []).map(asWord) }] };
+                const res = await engine.callJSON('insert_ocr_layer', docId, pno,
+                                                  JSON.stringify(payload), width, height);
+                if (res && typeof res === 'object') uncertain += res.doubts || 0;
             } finally {
                 URL.revokeObjectURL(url);
             }
             done++;
             onStep(Math.round((done / pages.length) * 100), `Read ${done} of ${pages.length}`);
         }
-        return done;
+        return { pages: done, uncertain };
     } finally {
         await worker.terminate();
     }
@@ -1742,8 +1847,11 @@ const OcrTool = {
         };
 
         try {
-            const done = await recognisePages('ocr', targets, $('ocr-lang').value, setProgress);
-            $('ocr-status').textContent = `Done - ${done} page(s) now carry a searchable text layer.`;
+            const res = await recognisePages('ocr', targets, $('ocr-lang').value,
+                                             setProgress, $('ocr-upright').checked);
+            const note = res.uncertain ? ` ${res.uncertain} word(s) were hard to read.` : '';
+            $('ocr-status').textContent =
+                `Done - ${res.pages} page(s) now carry a searchable text layer.${note}`;
             $('ocr-save').disabled = false;
             UI.toast('OCR complete', 'success');
         } catch (err) {
