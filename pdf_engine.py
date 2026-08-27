@@ -35,6 +35,10 @@ _WAS_ENCRYPTED = {}
 # Snapshots are capped by count *and* by total bytes, because this runs in the
 # browser's memory: a 20 MB scan would otherwise put 240 MB of history beside
 # it and take the tab down.
+# doc_id -> set of page numbers carrying a text layer this engine added by OCR.
+# Exact knowledge beats the heuristic below for the pages we read ourselves.
+_OCR_PAGES = {}
+
 _HISTORY = {}
 _HISTORY_STEPS = 12
 _HISTORY_BUDGET = 64 * 1024 * 1024
@@ -265,6 +269,7 @@ def close_doc(doc_id):
     doc = _DOCS.pop(doc_id, None)
     _WAS_ENCRYPTED.pop(doc_id, None)
     _HISTORY.pop(doc_id, None)
+    _OCR_PAGES.pop(doc_id, None)
     if doc is not None:
         doc.close()
     return True
@@ -436,11 +441,18 @@ def get_web_font(doc_id, pno, font_name):
     return b""
 
 
-def edit_text(doc_id, pno, bbox, new_text, font_name="", size=0, color_int=0, flags=0):
+def edit_text(doc_id, pno, bbox, new_text, font_name="", size=0, color_int=0,
+              flags=0, cover=False):
     """Replace the text in one span, keeping the original look.
 
     The old glyphs are genuinely removed from the content stream (redaction),
     then the replacement is drawn with matched font, size and colour.
+
+    `cover` is for scanned pages. There the words you see are pixels in an
+    image, and the text objects are only the invisible layer OCR added on top:
+    removing them changes nothing visible, so the old wording would still show
+    through under the new. With cover set, the paper colour is sampled from
+    the scan itself and painted over the region first.
     """
     doc = _doc(doc_id)
     page = doc[int(pno)]
@@ -455,8 +467,17 @@ def edit_text(doc_id, pno, bbox, new_text, font_name="", size=0, color_int=0, fl
     page.add_redact_annot(rect)
     page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE)
 
+    if cover:
+        # Pad a little: glyphs are anti-aliased, and their bounding box clips
+        # descenders and the faint edge pixels that would otherwise survive as
+        # a grey ghost of the old word.
+        pad = max(rect.height * 0.12, 0.6)
+        patch = pymupdf.Rect(rect.x0 - pad, rect.y0 - pad, rect.x1 + pad, rect.y1 + pad)
+        page.draw_rect(patch, color=None, fill=_sample_background(page, patch),
+                       width=0, overlay=True)
+
     if not new_text:
-        return json.dumps({"ok": True, "font": "", "exact": False})
+        return json.dumps({"ok": True, "font": "", "exact": False, "covered": bool(cover)})
 
     font, measurer, exact = _register_font(page, buf, font_name, flags)
     size = float(size) or (rect.height * 0.8)
@@ -469,7 +490,7 @@ def edit_text(doc_id, pno, bbox, new_text, font_name="", size=0, color_int=0, fl
         color=_int_to_rgb(int(color_int)),
     )
     return json.dumps({"ok": True, "font": font_name if exact else _pick_font(font_name, int(flags or 0)),
-                       "exact": exact, "size": round(size, 1)})
+                       "exact": exact, "size": round(size, 1), "covered": bool(cover)})
 
 
 def insert_text(doc_id, pno, x_frac, y_frac, text, size=12, color="#000000",
@@ -973,6 +994,82 @@ def needs_ocr(doc_id, pno):
     return len(_doc(doc_id)[int(pno)].get_text().strip()) < 12
 
 
+def page_status(doc_id, pno):
+    """What the Edit tab needs to know before offering to edit a page.
+
+    A scanned page carries no text objects at all, so there is nothing to
+    click and the tab would otherwise sit there looking broken. Reporting
+    this lets the editor say what the page actually is and offer OCR.
+    """
+    page = _doc(doc_id)[int(pno)]
+    chars = len(page.get_text().strip())
+    images = len(page.get_images(full=True))
+    # Text sitting on top of a page-sized image is the invisible layer OCR
+    # leaves behind: the words are selectable, but what you *see* is the scan,
+    # so editing has to paint over pixels rather than only replace glyphs.
+    ocr_layer = int(pno) in _OCR_PAGES.get(doc_id, set())
+    if not ocr_layer and images and chars:
+        # A file that arrived already OCR'd: text sitting on top of imagery
+        # that covers most of the page. Total coverage is the test, not one
+        # dominant image -- scanners often tile a page into many strips, and
+        # a single-image check misses those completely.
+        page_area = abs(page.rect.width * page.rect.height) or 1
+        covered = 0.0
+        for info in page.get_images(full=True):
+            for r in page.get_image_rects(info[0]):
+                covered += abs(r.width * r.height)
+        ocr_layer = (covered / page_area) > 0.5
+    return json.dumps({
+        "chars": chars,
+        "images": images,
+        "scanned": chars < 12 and images > 0,
+        "ocrLayer": ocr_layer,
+    })
+
+
+def _sample_background(page, rect):
+    """The scan's own background colour beneath a region, as a 0..1 RGB tuple.
+
+    Editing a scanned page means painting over pixels, and a scan is rarely
+    pure white -- it is off-white, grey or faintly coloured, so a white patch
+    would read as an obvious sticker. The most common colour inside the strip
+    is the paper behind the text, since background outnumbers ink.
+    """
+    try:
+        clip = pymupdf.Rect(rect) & page.rect
+        if clip.is_empty:
+            return (1, 1, 1)
+        pix = page.get_pixmap(dpi=48, clip=clip, colorspace=pymupdf.csRGB, alpha=False)
+        if not pix.width or not pix.height:
+            return (1, 1, 1)
+        data = pix.samples
+        # Two passes. Coarse buckets first, because scan noise means exact
+        # colours almost never repeat and a raw histogram finds no majority.
+        counts = {}
+        for i in range(0, len(data) - 2, 3):
+            key = (data[i] >> 4, data[i + 1] >> 4, data[i + 2] >> 4)
+            counts[key] = counts.get(key, 0) + 1
+        if not counts:
+            return (1, 1, 1)
+        winner = max(counts, key=counts.get)
+        # Then average the real values inside the winning bucket. Using the
+        # bucket's midpoint instead leaves the patch a few levels off the paper
+        # around it, which reads as a pale rectangle stuck on the page.
+        totals = [0, 0, 0]
+        n = 0
+        for i in range(0, len(data) - 2, 3):
+            if (data[i] >> 4, data[i + 1] >> 4, data[i + 2] >> 4) == winner:
+                totals[0] += data[i]
+                totals[1] += data[i + 1]
+                totals[2] += data[i + 2]
+                n += 1
+        if not n:
+            return (1, 1, 1)
+        return tuple((t / n) / 255 for t in totals)
+    except Exception:
+        return (1, 1, 1)
+
+
 def insert_ocr_layer(doc_id, pno, words_json, img_width, img_height):
     """Insert recognised words as invisible, selectable text.
 
@@ -985,6 +1082,10 @@ def insert_ocr_layer(doc_id, pno, words_json, img_width, img_height):
     sx = page.rect.width / float(img_width)
     sy = page.rect.height / float(img_height)
     added = 0
+    # Remember that this page's text came from a scan. Editing it later has to
+    # paint over the image, since the words a reader sees are pixels and the
+    # layer added here is invisible.
+    _OCR_PAGES.setdefault(doc_id, set()).add(int(pno))
 
     for word in words:
         text = (word.get("text") or "").strip()
@@ -2137,11 +2238,13 @@ def get_blocks(doc_id, pno):
 
 
 def edit_block(doc_id, pno, bbox, new_text, font_name="", size=0, color_int=0,
-               flags=0, grow=True):
+               flags=0, grow=True, cover=False):
     """Replace a whole paragraph, reflowing the replacement inside its box.
 
     Unlike span editing this rewraps across lines, so the new wording does not
-    have to be the same length as the old.
+    have to be the same length as the old. `cover` behaves as in edit_text: on
+    a page read from a scan, the paper colour is painted over the region first
+    so the imaged wording underneath does not show through.
     """
     doc = _doc(doc_id)
     page = doc[int(pno)]
@@ -2156,8 +2259,15 @@ def edit_block(doc_id, pno, bbox, new_text, font_name="", size=0, color_int=0,
     page.add_redact_annot(rect)
     page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE)
 
+    if cover:
+        pad = max(start_size * 0.25, 1.0)
+        patch = pymupdf.Rect(rect.x0 - pad, rect.y0 - pad, rect.x1 + pad, rect.y1 + pad)
+        page.draw_rect(patch, color=None, fill=_sample_background(page, patch),
+                       width=0, overlay=True)
+
     if not new_text:
-        return json.dumps({"ok": True, "size": 0, "grew": False, "exact": False})
+        return json.dumps({"ok": True, "size": 0, "grew": False, "exact": False,
+                           "covered": bool(cover)})
 
     font, _measurer, exact = _register_font(page, buf, font_name, flags)
 
@@ -2191,7 +2301,8 @@ def edit_block(doc_id, pno, bbox, new_text, font_name="", size=0, color_int=0,
 
     page.insert_textbox(target, new_text, fontsize=start_size, fontname=font,
                         color=colour, align=0)
-    return json.dumps({"ok": True, "size": round(start_size, 1), "grew": grew, "exact": exact})
+    return json.dumps({"ok": True, "size": round(start_size, 1), "grew": grew,
+                       "exact": exact, "covered": bool(cover)})
 
 
 def get_outline(doc_id):

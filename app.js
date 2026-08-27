@@ -11,7 +11,7 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.9.0';
+const APP_VERSION = '4.10.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -597,6 +597,7 @@ const EditTool = {
         $('edit-search-btn').addEventListener('click', () => this.search());
         $('edit-search').addEventListener('keydown', (e) => { if (e.key === 'Enter') this.search(); });
 
+        $('edit-scan-ocr').addEventListener('click', () => this.ocrCurrent());
         $('edit-undo').addEventListener('click', () => this.step('undo'));
         $('edit-redo').addEventListener('click', () => this.step('redo'));
 
@@ -614,6 +615,83 @@ const EditTool = {
 
         this.setupDragAnnotate();
         this.setupAddText();
+    },
+
+    /* ---- scanned pages ---- */
+
+    /** A scanned page carries no text objects, so the editor has nothing to
+     *  offer until the page has been read. Say so plainly and put the fix
+     *  right there, rather than leaving an unclickable page and no reason. */
+    async checkScanned() {
+        const notice = $('edit-scan-notice');
+        if (!notice) return;
+        let status;
+        try {
+            status = await engine.callJSON('page_status', this.view.docId, this.view.page);
+        } catch (err) {
+            notice.classList.add('hidden');
+            return;
+        }
+        this.pageStatus = status;
+        // Editing a scanned page has to paint over pixels, not just swap
+        // glyphs: the words you see are in the image, and the text layer OCR
+        // adds is invisible.
+        this.coverPixels = !!status.ocrLayer;
+
+        if (status.scanned) {
+            $('edit-scan-title').textContent =
+                `Page ${this.view.page + 1} is a scan.`;
+            $('edit-scan-detail').textContent =
+                'Its words are part of an image, so there is nothing to tap yet. ' +
+                'Reading the page finds the words and makes them editable.';
+            $('edit-scan-ocr').textContent = 'Make this page editable';
+            notice.classList.remove('hidden');
+        } else if (status.ocrLayer) {
+            $('edit-scan-title').textContent = 'Read from a scan.';
+            $('edit-scan-detail').textContent =
+                'Editing here paints over the scanned image and writes the new ' +
+                'wording in its place, so what you see is what the file says.';
+            $('edit-scan-ocr').textContent = 'Read again';
+            notice.classList.remove('hidden');
+        } else {
+            notice.classList.add('hidden');
+        }
+    },
+
+    async ocrCurrent() {
+        const all = $('edit-scan-all').checked;
+        const pages = all
+            ? Array.from({ length: this.view.pages }, (_, i) => i)
+            : [this.view.page];
+
+        const bar = $('edit-scan-bar');
+        const status = $('edit-scan-status');
+        const btn = $('edit-scan-ocr');
+        bar.classList.remove('hidden');
+        status.classList.remove('hidden');
+        btn.disabled = true;
+        const setProgress = (pct, label) => {
+            $('edit-scan-fill').style.width = `${pct}%`;
+            $('edit-scan-pct').textContent = `${pct}%`;
+            if (label) status.textContent = label;
+        };
+
+        try {
+            await this.mark();
+            const done = await recognisePages(this.view.docId, pages,
+                                              $('edit-scan-lang').value, setProgress);
+            await this.view.render();
+            await this.refreshHistory();
+            status.textContent = `${done} page(s) read - tap any line to edit it.`;
+            UI.toast(`Read ${done} page(s) - the text is editable now`, 'success');
+        } catch (err) {
+            console.error(err);
+            status.textContent = `Could not read the page: ${UI.explain(err)}`;
+            UI.toast('Reading the page failed', 'error');
+        } finally {
+            btn.disabled = false;
+            bar.classList.add('hidden');
+        }
     },
 
     /* ---- undo / redo ---- */
@@ -757,6 +835,7 @@ const EditTool = {
     async drawSpans() {
         const overlay = this.view.overlay;
         overlay.innerHTML = '';
+        await this.checkScanned();
         if (this.mode !== 'TEXT' && this.mode !== 'BLOCK') return;
 
         // Line mode edits one span; paragraph mode edits a whole block and reflows.
@@ -947,11 +1026,14 @@ const EditTool = {
         await UI.run(deleting ? 'Deleting text…'
                               : (isBlock ? 'Rewriting paragraph…' : 'Replacing text…'), async () => {
             await this.mark();
+            // On a page read from a scan the visible words are pixels, so the
+            // region has to be painted over before the new wording is drawn.
             const res = await engine.callJSON(isBlock ? 'edit_block' : 'edit_text',
                                               this.view.docId, this.view.page, item.bbox,
                                               next, item.font, item.size,
                                               item.colorInt, item.flags,
-                                              ...(isBlock ? [true] : []));
+                                              ...(isBlock ? [true, this.coverPixels]
+                                                          : [this.coverPixels]));
             await this.view.render();
             await this.refreshHistory();
             if (deleting) return UI.toast('Text deleted from the page', 'success');
@@ -1553,6 +1635,58 @@ const StampTool = {
 /* 5. OCR                                                              */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/* shared OCR                                                          */
+/* ------------------------------------------------------------------ */
+
+/** Recognise pages and write an invisible text layer back into the document.
+ *
+ * Shared by the OCR tab and the Edit tab: a scanned page has no text objects
+ * at all, so the editor needs exactly this before it has anything to offer.
+ *
+ * @param docId    document already open in the engine
+ * @param pages    page indices to read
+ * @param lang     Tesseract language code(s), e.g. "eng" or "eng+hin"
+ * @param onStep   (pct, label) progress callback
+ */
+async function recognisePages(docId, pages, lang, onStep = () => {}) {
+    onStep(0, 'Loading the reader…');
+    const worker = await Tesseract.createWorker(lang, 1, {
+        // The language pack is ~11 MB on first use. Without this the UI sits
+        // silent through the download and looks like it has frozen.
+        logger: (m) => {
+            if (m.status && m.status !== 'recognizing text') {
+                onStep(Math.round((m.progress || 0) * 100),
+                       `${m.status.charAt(0).toUpperCase()}${m.status.slice(1)}…`);
+            }
+        },
+    });
+    try {
+        let done = 0;
+        for (const pno of pages) {
+            onStep(Math.round((done / pages.length) * 100), `Reading page ${pno + 1}…`);
+            // Render high: recognition accuracy follows input resolution.
+            const png = await engine.call('render_page', docId, pno, 200);
+            const blob = new Blob([png], { type: 'image/png' });
+            const url = URL.createObjectURL(blob);
+            try {
+                const { data } = await worker.recognize(url);
+                const bitmap = await createImageBitmap(blob);
+                const words = (data.words || []).map((w) => ({ text: w.text, bbox: w.bbox }));
+                await engine.call('insert_ocr_layer', docId, pno, JSON.stringify(words),
+                                  bitmap.width, bitmap.height);
+            } finally {
+                URL.revokeObjectURL(url);
+            }
+            done++;
+            onStep(Math.round((done / pages.length) * 100), `Read ${done} of ${pages.length}`);
+        }
+        return done;
+    } finally {
+        await worker.terminate();
+    }
+}
+
 const OcrTool = {
     init() {
         $('ocr-file').addEventListener('change', (e) => this.open(e.target.files[0]));
@@ -1590,63 +1724,23 @@ const OcrTool = {
 
         $('ocr-bar').classList.remove('hidden');
         $('ocr-run').disabled = true;
-
-        // The language pack is ~11 MB on first use. Without this logger the UI
-        // sits silent through the download and looks like it has frozen.
         const setProgress = (pct, label) => {
             $('ocr-fill').style.width = `${pct}%`;
             $('ocr-pct').textContent = `${pct}%`;
             if (label) $('ocr-status').textContent = label;
         };
-        setProgress(0, 'Loading OCR engine…');
 
-        let worker;
         try {
-            worker = await Tesseract.createWorker($('ocr-lang').value, 1, {
-                logger: (m) => {
-                    if (m.status && m.status !== 'recognizing text') {
-                        setProgress(Math.round((m.progress || 0) * 100),
-                                    `${m.status.charAt(0).toUpperCase()}${m.status.slice(1)}…`);
-                    }
-                },
-            });
-        } catch (err) {
-            console.error(err);
-            $('ocr-status').textContent =
-                `Could not load the OCR engine (${err.message}). Check your connection and try again.`;
-            $('ocr-run').disabled = false;
-            return UI.toast('OCR engine failed to load', 'error');
-        }
-
-        let done = 0;
-        try {
-            for (const pno of targets) {
-                $('ocr-status').textContent =
-                    `Recognising page ${pno + 1} of ${targets.length === 1 ? pno + 1 : this.pages}…`;
-                // Render at higher DPI: OCR accuracy depends on input resolution.
-                const png = await engine.call('render_page', 'ocr', pno, 200);
-                const url = URL.createObjectURL(new Blob([png], { type: 'image/png' }));
-                const { data } = await worker.recognize(url);
-
-                const bitmap = await createImageBitmap(new Blob([png], { type: 'image/png' }));
-                const words = (data.words || []).map((w) => ({ text: w.text, bbox: w.bbox }));
-                await engine.call('insert_ocr_layer', 'ocr', pno, JSON.stringify(words),
-                                  bitmap.width, bitmap.height);
-                URL.revokeObjectURL(url);
-
-                done++;
-                setProgress(Math.round((done / targets.length) * 100));
-            }
+            const done = await recognisePages('ocr', targets, $('ocr-lang').value, setProgress);
             $('ocr-status').textContent = `Done - ${done} page(s) now carry a searchable text layer.`;
             $('ocr-save').disabled = false;
             UI.toast('OCR complete', 'success');
         } catch (err) {
             console.error(err);
-            $('ocr-status').textContent = `OCR failed: ${err.message}`;
-            UI.toast(`OCR failed: ${err.message}`, 'error');
+            $('ocr-status').textContent = `OCR failed: ${UI.explain(err)}`;
+            UI.toast(`OCR failed: ${UI.explain(err)}`, 'error');
         } finally {
             $('ocr-run').disabled = false;
-            await worker.terminate();
         }
     },
 };
