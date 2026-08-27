@@ -11,7 +11,7 @@ An Acrobat-class PDF suite that runs **entirely in your browser**. No file is ev
 Fifteen tools, reachable from a dashboard on the home screen.
 
 **Edit**
-- **Edit Text** - tap any line or paragraph and type straight on the page; there is no dialog box. The editor uses the document's *own* embedded font at the page's own size and colour, so what you type is what you get, and the replacement is written back into the file in that same font. Paragraphs rewrap to fit. Plus real PDF annotations and a bookmarks/outline editor.
+- **Edit Text** - tap any line or paragraph and type straight on the page; there is no dialog box. **Undo and redo** (Ctrl+Z / Ctrl+Shift+Z) cover every change, so a mistake no longer means reloading and losing your work. Clear a box to **delete** that text, switch to **Add text** to place new text anywhere, and **zoom** in for precise work on small type. The editor uses the document's *own* embedded font at the page's own size and colour, so what you type is what you get, and the replacement is written back into the file in that same font. Paragraphs rewrap to fit. Plus real PDF annotations and a bookmarks/outline editor.
 - **Fill & Sign** - draw, type or upload a signature; place initials, text, dates and check marks; fill and flatten form fields.
 - **Watermark & Stamps** - watermarks, approval stamps, page numbers, headers/footers and legal **Bates numbering**.
 - **Find & Replace** - genuine search-and-replace inside a PDF, each replacement taking the font, size and colour of the text it replaces.
