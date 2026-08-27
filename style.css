@@ -1770,3 +1770,15 @@ body {
   .scan-notice__actions { gap: var(--space-8); }
   .scan-notice__actions .btn { flex: 1 1 100%; }
 }
+
+/* A word the reader was unsure of. Amber rather than red: it is a prompt to
+   look, not an error - the reading may well be right. */
+.span-box--doubt {
+  border-color: var(--color-warning, #a84b2f);
+  border-style: dashed;
+  background: rgba(var(--color-warning-rgb, 168, 75, 47), 0.12);
+}
+
+.span-box--doubt:hover {
+  background: rgba(var(--color-warning-rgb, 168, 75, 47), 0.22);
+}

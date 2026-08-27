@@ -39,6 +39,11 @@ _WAS_ENCRYPTED = {}
 # Exact knowledge beats the heuristic below for the pages we read ourselves.
 _OCR_PAGES = {}
 
+# (doc_id, page) -> list of rects the reader was unsure about, as fractions of
+# the page. Kept out of the document itself: this is a hint for the person
+# editing, not something that belongs in the file they send on.
+_OCR_DOUBTS = {}
+
 _HISTORY = {}
 _HISTORY_STEPS = 12
 _HISTORY_BUDGET = 64 * 1024 * 1024
@@ -270,6 +275,8 @@ def close_doc(doc_id):
     _WAS_ENCRYPTED.pop(doc_id, None)
     _HISTORY.pop(doc_id, None)
     _OCR_PAGES.pop(doc_id, None)
+    for key in [k for k in _OCR_DOUBTS if k[0] == doc_id]:
+        _OCR_DOUBTS.pop(key, None)
     if doc is not None:
         doc.close()
     return True
@@ -1070,6 +1077,56 @@ def _sample_background(page, rect):
         return (1, 1, 1)
 
 
+# A word the reader scored below this is worth a second look. Tesseract's
+# scale is 0-100; body text on a clean scan sits in the 90s, so 60 separates
+# "probably fine" from "check this" without flagging half the page.
+_OCR_DOUBT_BELOW = 60.0
+
+
+def _ocr_skew(lines):
+    """Page skew in degrees, from the slope of the recognised baselines.
+
+    Free information: the reader already reports where each line rests, and a
+    tilted page tilts them all. Reported rather than acted on, because a scan
+    that is already straight must not be rotated on a noisy estimate.
+    """
+    import math
+    angles = []
+    for line in lines:
+        b = line.get("baseline") or {}
+        if not b.get("has_baseline"):
+            continue
+        try:
+            dx = float(b["x1"]) - float(b["x0"])
+            dy = float(b["y1"]) - float(b["y0"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if dx < 80:          # short lines say little about the page angle
+            continue
+        angles.append(math.degrees(math.atan2(dy, dx)))
+    if not angles:
+        return 0.0
+    angles.sort()
+    return angles[len(angles) // 2]
+
+
+def set_page_rotation(doc_id, pno, degrees):
+    """Turn a page upright.
+
+    Only the page's /Rotate entry changes, so nothing is re-encoded and no
+    quality is lost -- which matters for a scan, where re-rendering the image
+    to straighten it would degrade the very thing being read.
+    """
+    page = _doc(doc_id)[int(pno)]
+    page.set_rotation((page.rotation + int(degrees)) % 360)
+    return page.rotation
+
+
+def ocr_doubts(doc_id, pno):
+    """Where the reader was unsure, so the editor can point at those words."""
+    return json.dumps(_OCR_DOUBTS.get((doc_id, int(pno))) or [])
+
+
 def _ocr_word_size(font, text, width_pt, fallback):
     """Font size at which `text` is exactly `width_pt` wide.
 
@@ -1124,7 +1181,9 @@ def insert_ocr_layer(doc_id, pno, payload_json, img_width, img_height):
         lines = [{"words": payload or []}]
 
     font = pymupdf.Font("helv")
+    pw, ph = page.rect.width, page.rect.height
     added = 0
+    doubts = []
     _OCR_PAGES.setdefault(doc_id, set()).add(int(pno))
 
     for line in lines:
@@ -1151,8 +1210,9 @@ def insert_ocr_layer(doc_id, pno, payload_json, img_width, img_height):
             else:
                 baseline = float(base_px) * sy + oy
             size = _ocr_word_size(font, text, x1 - x0, max(y1 - y0, 1) * 0.95)
-            placed.append({"text": text, "x0": x0, "x1": x1,
-                           "baseline": baseline, "size": size})
+            placed.append({"text": text, "x0": x0, "x1": x1, "y0": y0, "y1": y1,
+                           "baseline": baseline, "size": size,
+                           "conf": word.get("confidence")})
 
         # One size for the line. The median resists a stray mark or a single
         # character, whose width says little about the type around it.
@@ -1175,7 +1235,18 @@ def insert_ocr_layer(doc_id, pno, payload_json, img_width, img_height):
             page.insert_text((p["x0"], p["baseline"]), p["text"],
                              fontsize=size, fontname="helv", render_mode=3)
             added += 1
-    return added
+            conf = p.get("conf")
+            if conf is not None and conf < _OCR_DOUBT_BELOW:
+                doubts.append({
+                    "text": p["text"], "conf": round(float(conf), 1),
+                    "xFrac": p["x0"] / pw, "yFrac": p["y0"] / ph,
+                    "wFrac": max(p["x1"] - p["x0"], 0.5) / pw,
+                    "hFrac": max(p["y1"] - p["y0"], 0.5) / ph,
+                })
+
+    _OCR_DOUBTS[(doc_id, int(pno))] = doubts
+    return json.dumps({"added": added, "doubts": len(doubts),
+                       "skew": round(_ocr_skew(lines), 3)})
 
 
 # --------------------------------------------------------------------------
