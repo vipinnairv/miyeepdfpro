@@ -23,7 +23,7 @@ Fifteen tools, reachable from a dashboard on the home screen.
 - **Compress** - recompress images and clean the file while text stays real, searchable text. Takes several files at once.
 
 **Protect**
-- **Find Sensitive Data** - scan for PAN, GSTIN, Aadhaar, IFSC, card and account numbers, emails, phones and IPs, then permanently redact the ones you choose. Card and Aadhaar numbers are checksum-verified (Luhn and Verhoeff) so ordinary figures are not flagged.
+- **Find Sensitive Data** - scan for PAN, GSTIN, Aadhaar, IFSC, card and account numbers, emails, phones and IPs, then permanently redact them. Card and Aadhaar numbers are checksum-verified (Luhn and Verhoeff) so ordinary figures are not flagged. **Everything found is marked on the page itself**, so you see exactly what is about to be deleted and can click a mark, a row or a whole category to change your mind - redaction is irreversible, and it should not be a leap of faith. Results are grouped by kind. Removal is either a **black box** or **masking**, which deletes the original characters and writes something like `XXXXXXXXXXXX4291` back in, so a statement still reconciles. Point it at a folder of files and it scans and redacts every one.
 - **Inspect & Sanitize** - reveal what travels with a PDF beyond its pages (author metadata, XMP, embedded files, JavaScript, hidden layers, annotations, links) and strip it before sharing.
 - **Redact** - remove content from the file rather than covering it, with a selectable box colour.
 - **Password Protect** - AES-256 encryption with per-permission control, and password removal. Password-protected files can be opened by every tool: you are asked to unlock once, and the rest of the app treats it like any other document.
@@ -44,8 +44,9 @@ page, so the rail shows the document as it is now.
 
 ## Working on several files at once
 
-Six of the tools accept more than one PDF: **Compress**, **Password Protect**,
-**Watermark & Stamps**, **OCR**, **Find & Replace** and **Inspect & Sanitize**.
+Seven of the tools accept more than one PDF: **Compress**, **Password Protect**,
+**Watermark & Stamps**, **OCR**, **Find & Replace**, **Inspect & Sanitize** and
+**Find Sensitive Data**.
 Drop a folder's worth in, set the options once, and you get a ZIP back with
 every file done. A file that cannot be read, or a locked one whose password
 you decline to type, is named in the summary and skipped rather than losing
@@ -72,6 +73,7 @@ MiyeePDF edits the actual document instead:
 | **Protect** | Whole document re-photographed to enable encryption | AES-256 applied to the document; text stays searchable |
 | **Compress** | Every page rasterized; text destroyed | Only images recompressed; text stays vector |
 | **Edit text** | White box over old text, new text drawn on top | Original text replaced, matching font, size and colour |
+| **Mask an ID** | Characters covered; still selectable underneath | Original deleted, a masked stub written in its place |
 
 ## First load
 

@@ -2054,25 +2054,106 @@ def scan_sensitive(doc_id, kinds_json=None):
     return json.dumps({"hits": results, "summary": summary, "total": len(results)})
 
 
-def redact_hits(doc_id, hits_json, fill="#000000"):
-    """Permanently remove the scanned hits the user selected."""
+def mask_value(kind, value):
+    """A partly-hidden version of an identifier, for redaction that leaves a
+    document still usable.
+
+    Blacking out every card number in a statement makes it unreconcilable;
+    "XXXXXXXXXXXX4291" leaves you able to tell one card from another while the
+    number itself is gone from the file. What is kept is the part that
+    identifies without disclosing, and it differs by kind: an email keeps its
+    domain, an IFSC code its bank, a GSTIN its state, an address its network.
+    """
+    text = str(value)
+
+    if kind == "Email":
+        # The domain says who it is with; the mailbox is the personal part.
+        local, _, domain = text.partition("@")
+        return ("X" * max(len(local), 1)) + "@" + domain if domain else "X" * len(text)
+
+    if kind == "IFSC":
+        # First four letters are the bank; the rest is the branch.
+        return text[:4] + "X" * max(len(text) - 4, 0)
+
+    if kind == "GSTIN":
+        # First two digits are the state code.
+        return text[:2] + "X" * max(len(text) - 2, 0)
+
+    if kind == "IPAddr":
+        head, _, _ = text.partition(".")
+        return head + ".X.X.X"
+
+    # Everything else keeps its last four characters, the convention every
+    # bank statement and receipt already uses. Separators are left in place so
+    # the masked value still reads at a glance.
+    keep, out = 4, []
+    for ch in reversed(text):
+        if not ch.isalnum():
+            out.append(ch)
+        elif keep > 0:
+            out.append(ch)
+            keep -= 1
+        else:
+            out.append("X")
+    return "".join(reversed(out))
+
+
+def redact_hits(doc_id, hits_json, fill="#000000", mode="box"):
+    """Permanently remove the scanned hits the user selected.
+
+    mode="box"  paints the area over and deletes what was under it.
+    mode="mask" does the same, then writes a partly-hidden version of the
+                value back in its place, so the page still reads.
+
+    Either way the original characters are deleted from the content stream,
+    not covered up: nothing is recoverable from the saved file.
+    """
     doc = _doc(doc_id)
     hits = json.loads(hits_json) if isinstance(hits_json, str) else hits_json
     colour = _hex_to_rgb(fill)
+    masking = str(mode) == "mask"
     touched = set()
 
     for hit in hits:
         page = doc[int(hit["page"])]
+        rects = []
         for r in hit["rects"]:
-            rect = _rect_from_fracs(page, float(r["xFrac"]), float(r["yFrac"]),
-                                    float(r["xFrac"]) + float(r["wFrac"]),
-                                    float(r["yFrac"]) + float(r["hFrac"]))
-            page.add_redact_annot(rect, fill=colour)
+            rects.append(_rect_from_fracs(page, float(r["xFrac"]), float(r["yFrac"]),
+                                          float(r["xFrac"]) + float(r["wFrac"]),
+                                          float(r["yFrac"]) + float(r["hFrac"])))
+        if masking:
+            # One annotation over the whole value, so the replacement text is
+            # laid out once rather than broken across each word rectangle.
+            box = rects[0]
+            for rect in rects[1:]:
+                box = box | rect
+            replacement = mask_value(hit.get("kind", ""), hit.get("text", ""))
+            size = max(min(box.height * 0.7, 11.0), 4.0)
+            page.add_redact_annot(box, text=replacement, fontname="helv",
+                                  fontsize=size, align=pymupdf.TEXT_ALIGN_LEFT,
+                                  text_color=(0, 0, 0), fill=(1, 1, 1))
+        else:
+            for rect in rects:
+                page.add_redact_annot(rect, fill=colour)
         touched.add(int(hit["page"]))
 
     for pno in touched:
         doc[pno].apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE)
     return len(hits)
+
+
+def scan_and_redact(doc_id, kinds_json=None, fill="#000000", mode="box"):
+    """Scan a document and remove everything found, in one call.
+
+    This is what a batch run needs: across twenty files there is nobody to
+    tick boxes, so the choice of what to look for is made once and applied to
+    each. Returns what was removed, per kind, so the run can be reported
+    honestly rather than as a bare success.
+    """
+    found = json.loads(scan_sensitive(doc_id, kinds_json))
+    if found["total"]:
+        redact_hits(doc_id, found["hits"], fill, mode)
+    return json.dumps({"total": found["total"], "summary": found["summary"]})
 
 
 # --------------------------------------------------------------------------
