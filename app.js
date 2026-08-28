@@ -11,7 +11,7 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.13.0';
+const APP_VERSION = '4.14.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -460,6 +460,127 @@ class DocView {
         $$(`[data-zoom-for="${key}"]`).forEach((btn) => {
             btn.addEventListener('click', () => this.setZoom(btn.dataset.zoom));
         });
+
+        this.rail = $(`${key}-thumbs`);
+        this._thumbUrls = [];
+        $$(`[data-thumbs-for="${key}"]`).forEach((btn) => {
+            btn.addEventListener('click', () => this.toggleThumbs(btn));
+        });
+
+        // Typing a page number is how you move through a hundred-page file;
+        // clicking the arrow fifty times is not.
+        const jump = $(`${key}-page-jump`);
+        if (jump) {
+            const goTyped = () => {
+                const n = Number(jump.value);
+                if (!Number.isFinite(n)) return;
+                const target = Math.min(Math.max(Math.round(n), 1), this.pages) - 1;
+                jump.value = target + 1;
+                if (target !== this.page) this.go(target);
+            };
+            jump.addEventListener('change', goTyped);
+            jump.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') { e.preventDefault(); goTyped(); }
+            });
+        }
+    }
+
+    /* --- thumbnail rail ---------------------------------------------------
+     *
+     * Rendering every page up front stalls a long document - a 200-page file
+     * would sit behind 200 engine calls before showing anything - so each
+     * thumbnail is drawn only once it scrolls into the rail, and then kept.
+     * The draws are queued one at a time so a fast scroll cannot starve the
+     * main page render, which shares the engine with them.
+     */
+    buildThumbs() {
+        if (!this.rail) return;
+        this._thumbUrls.forEach((u) => URL.revokeObjectURL(u));
+        this._thumbUrls = [];
+        this._thumbQueue = [];
+        this._thumbBusy = false;
+        if (this._thumbWatcher) this._thumbWatcher.disconnect();
+        this.rail.innerHTML = '';
+
+        this._thumbWatcher = new IntersectionObserver((entries) => {
+            entries.forEach((e) => {
+                if (e.isIntersecting) this.queueThumb(Number(e.target.dataset.page));
+            });
+        }, { root: this.rail, rootMargin: '300px 0px' });
+
+        for (let i = 0; i < this.pages; i++) {
+            const cell = document.createElement('button');
+            cell.type = 'button';
+            cell.className = 'thumb';
+            cell.dataset.page = String(i);
+            cell.setAttribute('aria-label', `Page ${i + 1}`);
+            cell.innerHTML = `<span class="thumb__frame"></span><span class="thumb__no">${i + 1}</span>`;
+            cell.addEventListener('click', () => this.go(i));
+            this.rail.appendChild(cell);
+            this._thumbWatcher.observe(cell);
+        }
+        this.markThumb();
+    }
+
+    queueThumb(index, force = false) {
+        const cell = this.rail && this.rail.children[index];
+        if (!cell) return;
+        if (cell.dataset.drawn === '1' && !force) return;
+        cell.dataset.drawn = '1';
+        this._thumbQueue.push(index);
+        this.drainThumbs();
+    }
+
+    async drainThumbs() {
+        if (this._thumbBusy) return;
+        this._thumbBusy = true;
+        try {
+            while (this._thumbQueue.length) {
+                const index = this._thumbQueue.shift();
+                const cell = this.rail && this.rail.children[index];
+                if (!cell) continue;
+                let png;
+                try {
+                    png = await engine.call('render_thumb', this.docId, index, 132);
+                } catch (err) {
+                    // The document may have been closed or swapped while this
+                    // was queued. Let it be redrawn later rather than leaving
+                    // a broken image in the rail.
+                    cell.dataset.drawn = '';
+                    continue;
+                }
+                const url = URL.createObjectURL(new Blob([png], { type: 'image/png' }));
+                this._thumbUrls.push(url);
+                const frame = cell.querySelector('.thumb__frame');
+                frame.innerHTML = '';
+                const img = document.createElement('img');
+                img.alt = '';
+                img.src = url;
+                frame.appendChild(img);
+            }
+        } finally {
+            this._thumbBusy = false;
+        }
+    }
+
+    /** Show which page is on screen, and scroll the rail to it. */
+    markThumb() {
+        if (!this.rail) return;
+        Array.from(this.rail.children).forEach((cell, i) => {
+            const here = i === this.page;
+            cell.classList.toggle('thumb--current', here);
+            cell.setAttribute('aria-current', here ? 'page' : 'false');
+            // The rail is a column on a wide screen and a strip on a narrow
+            // one, so both axes are nudged.
+            if (here) cell.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        });
+    }
+
+    toggleThumbs(btn) {
+        if (!this.rail) return;
+        const hidden = this.rail.classList.toggle('hidden');
+        btn.setAttribute('aria-pressed', String(!hidden));
+        btn.setAttribute('aria-label', hidden ? 'Show page thumbnails' : 'Hide page thumbnails');
     }
 
     /** Zoom the page. Overlays are positioned in percentages, so they follow
@@ -504,6 +625,9 @@ class DocView {
         this.pages = this.info.pages;
         this.page = 0;
         $(`${this.key}-workspace`).classList.remove('hidden');
+        const jump = $(`${this.key}-page-jump`);
+        if (jump) { jump.max = this.pages; jump.value = 1; }
+        this.buildThumbs();
         await this.render();
         return this.info;
     }
@@ -528,6 +652,14 @@ class DocView {
         });
         const info = $(`${this.key}-page-info`);
         if (info) info.textContent = `${this.page + 1}/${this.pages}`;
+        const jump = $(`${this.key}-page-jump`);
+        if (jump && Number(jump.value) !== this.page + 1) jump.value = this.page + 1;
+        this.markThumb();
+        // Every operation that changes the document ends in a re-render, so
+        // this is where a stale thumbnail gets caught: redact a page, stamp
+        // it or edit its text and the rail shows the change rather than the
+        // version from when the file was opened.
+        this.queueThumb(this.page, true);
         if (this.overlay) this.overlay.innerHTML = '';
         if (this.onRender) await this.onRender();
     }
@@ -1586,12 +1718,12 @@ const StampTool = {
             // cannot work across files. The other four settings can.
             $('stamp-apply').disabled = true;
             $('stamp-save').disabled = true;
-            $('stamp-holder').classList.add('hidden');
+            $('stamp-viewer').classList.add('hidden');
             return batchChosen('stamp', list);
         }
         $('stamp-apply').disabled = false;
         $('stamp-save').disabled = false;
-        $('stamp-holder').classList.remove('hidden');
+        $('stamp-viewer').classList.remove('hidden');
         $('stamp-summary').classList.add('hidden');
         $('stamp-result').classList.add('hidden');
         await UI.run('Opening document…', () => this.view.load(this.file));

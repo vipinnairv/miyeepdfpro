@@ -33,6 +33,15 @@ Fifteen tools, reachable from a dashboard on the home screen.
 - **Export** - a real editable **Word .docx** (headings, bold and italic preserved), a web page, plain text, tables to a formatted Excel workbook (or CSV), embedded images, and page renders to PNG or JPEG.
 
 
+## Finding your way around a long document
+
+The Edit, Fill & Sign, Watermark and Redact viewers carry a **thumbnail rail**
+down the side: click any page to go to it, and the page you are on is marked.
+A **page number box** sits in the toolbar for jumping straight to page 84 of
+120. Thumbnails are drawn only as they scroll into the rail, so a long file
+opens as fast as a short one, and a thumbnail is redrawn when you change that
+page, so the rail shows the document as it is now.
+
 ## Working on several files at once
 
 Six of the tools accept more than one PDF: **Compress**, **Password Protect**,

@@ -815,6 +815,7 @@ body {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
   background: var(--color-bg-2);
 }
 
@@ -895,7 +896,104 @@ body {
   border-color: var(--color-primary);
 }
 
-/* Page canvas ----------------------------------------------------------- */
+/* Page canvas + thumbnail rail ------------------------------------------- */
+
+.viewer-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* The page scrolls in its own column so that zooming, which can make the page
+   several times wider than the viewer, never pushes the rail off screen. */
+.viewer-scroll {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The app grows with its content rather than filling the viewport, so a rail
+   sized by flex would be as tall as sixty thumbnails and never scroll - which
+   also means every one counts as on screen and the whole document gets
+   rendered at once. Capping it here gives it something to scroll inside, and
+   sticky keeps it beside the page as the window scrolls. */
+.thumb-rail {
+  width: 156px;
+  flex-shrink: 0;
+  align-self: flex-start;
+  position: sticky;
+  top: var(--space-8);
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--space-12) var(--space-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  border-right: 1px solid var(--color-border);
+  background: var(--color-surface);
+  scrollbar-width: thin;
+}
+
+.thumb {
+  border: 1px solid transparent;
+  background: none;
+  padding: var(--space-4);
+  border-radius: var(--radius-base);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.thumb:hover { border-color: var(--color-primary); }
+
+.thumb--current {
+  border-color: var(--color-primary);
+  background: var(--color-secondary);
+  color: var(--color-text);
+  font-weight: var(--font-weight-medium);
+}
+
+/* A fixed box so the rail does not jolt as thumbnails arrive one by one:
+   every page keeps its place from the moment the rail is built. */
+.thumb__frame {
+  width: 100%;
+  aspect-ratio: 1 / 1.414;
+  display: block;
+  background: var(--color-bg-2);
+  border: 1px solid var(--color-border);
+  border-radius: 2px;
+  overflow: hidden;
+  line-height: 0;
+}
+
+.thumb__frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  background: white;
+}
+
+.thumb__no { line-height: 1; }
+
+.page-jump {
+  width: 56px;
+  padding: var(--space-4) var(--space-6);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-base);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  text-align: center;
+}
 
 .page-holder {
   position: relative;
@@ -1307,6 +1405,17 @@ body {
 /* Responsive ------------------------------------------------------------- */
 
 @media (max-width: 960px) {
+  .viewer-body { flex-direction: column; }
+  .thumb-rail {
+    width: 100%;
+    flex-direction: row;
+    position: static;
+    align-self: stretch;
+    max-height: 132px;
+    border-right: none;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .thumb { width: 84px; flex-shrink: 0; }
   .workspace { flex-direction: column; }
   .workspace__side { width: 100%; border-left: none; border-top: 1px solid var(--color-border); }
   .compare-inputs { flex-direction: column; }
@@ -1704,7 +1813,7 @@ body {
    letting the page spill over the layout. Overlays sit in percentages, so
    they track the image at any zoom without recalculation. */
 
-.workspace__main { overflow: auto; }
+.workspace__main { min-height: 0; }
 
 .page-holder { flex: none; }
 

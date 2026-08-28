@@ -388,6 +388,19 @@ def render_page(doc_id, pno, dpi=100):
     return page.get_pixmap(dpi=int(dpi)).tobytes("png")
 
 
+def render_thumb(doc_id, pno, width=132):
+    """Render one page small, for the thumbnail rail.
+
+    Sized by pixel width rather than dpi so every thumbnail comes out the same
+    width whatever the paper size, which is what lets the rail line up. A4 and
+    Letter and a wide plan drawing all land on the same column.
+    """
+    page = _doc(doc_id)[int(pno)]
+    scale = float(width) / max(page.rect.width, 1.0)
+    pix = page.get_pixmap(matrix=pymupdf.Matrix(scale, scale), alpha=False)
+    return pix.tobytes("png")
+
+
 def save(doc_id, garbage=3, deflate=True):
     """Serialise the working document."""
     return _doc(doc_id).tobytes(garbage=int(garbage), deflate=bool(deflate), clean=True)
