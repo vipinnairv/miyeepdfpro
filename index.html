@@ -13,14 +13,14 @@
 
     <!-- SVG first for modern browsers; .ico covers older ones and the
          automatic /favicon.ico request. -->
-    <link rel="icon" href="favicon.svg?v=4.14.0" type="image/svg+xml">
-    <link rel="icon" href="favicon.ico?v=4.14.0" sizes="16x16 32x32 48x48">
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.14.0">
-    <link rel="manifest" href="site.webmanifest?v=4.14.0">
+    <link rel="icon" href="favicon.svg?v=4.15.0" type="image/svg+xml">
+    <link rel="icon" href="favicon.ico?v=4.15.0" sizes="16x16 32x32 48x48">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.15.0">
+    <link rel="manifest" href="site.webmanifest?v=4.15.0">
 
     <!-- ?v= busts the browser cache on redeploy: without it a stale app.js/style.css
          pair silently breaks the page. Bump APP_VERSION in app.js to match. -->
-    <link rel="stylesheet" href="style.css?v=4.14.0">
+    <link rel="stylesheet" href="style.css?v=4.15.0">
     <script src="https://cdn.jsdelivr.net/pyodide/v314.0.5/full/pyodide.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
@@ -29,7 +29,7 @@
     <header class="header">
         <div class="header__content">
             <h1 class="header__title">
-                <img class="header__logo" src="logo.svg?v=4.14.0" alt="" width="34" height="34">
+                <img class="header__logo" src="logo.svg?v=4.15.0" alt="" width="34" height="34">
                 MiyeePDF <span class="header__byline">Built by Vipin Nair</span>
             </h1>
             <div class="header__right">
@@ -690,13 +690,45 @@
                 <h2>Find Sensitive Data</h2>
                 <p>Scans the whole document for identifiers people forget are in there - then removes the ones you choose, permanently</p>
             </div>
-            <div class="file-drop-zone" data-drop="scan" role="button" tabindex="0" aria-label="Choose a PDF, or drop one here">
-                <p>Drop a PDF here or click to select</p>
-                <input type="file" id="scan-file" accept=".pdf" hidden>
+            <div class="file-drop-zone" data-drop="scan" role="button" tabindex="0" aria-label="Choose one or more PDFs, or drop them here">
+                <p>Drop one or more PDFs here, or click to select</p>
+                <input type="file" id="scan-file" accept=".pdf" multiple hidden>
                 <button class="btn btn--primary" data-pick="scan-file">Select PDF</button>
             </div>
-            <div class="panel hidden" id="scan-workspace">
+            <div class="workspace hidden" id="scan-workspace">
+                <div class="workspace__main">
+                    <div class="viewer-toolbar">
+                        <div class="tool-group">
+                            <button class="btn btn--sm" data-thumbs-for="scan" aria-pressed="true"
+                                    aria-label="Hide page thumbnails" title="Page thumbnails">▤</button>
+                            <button class="btn btn--sm" data-nav="scan" data-dir="-1" aria-label="Previous page">◀</button>
+                            <input type="number" class="page-jump" id="scan-page-jump" min="1" value="1"
+                                   aria-label="Go to page" title="Type a page number and press Enter">
+                            <span class="page-indicator" id="scan-page-info">-/-</span>
+                            <button class="btn btn--sm" data-nav="scan" data-dir="1" aria-label="Next page">▶</button>
+                        </div>
+                        <div class="tool-group">
+                            <button class="btn btn--sm" data-zoom="out" data-zoom-for="scan" aria-label="Zoom out" title="Zoom out">−</button>
+                            <span class="page-indicator" id="scan-zoom-level">Fit</span>
+                            <button class="btn btn--sm" data-zoom="in" data-zoom-for="scan" aria-label="Zoom in" title="Zoom in">+</button>
+                            <button class="btn btn--sm" data-zoom="reset" data-zoom-for="scan" title="Fit to width">Fit</button>
+                        </div>
+                    </div>
+                    <p class="hint" id="scan-hint">Scan the document, then see exactly what will be removed marked on the page. Click a mark, or a row in the list, to select or deselect it.</p>
+                    <div class="viewer-body" id="scan-viewer">
+                        <aside class="thumb-rail" id="scan-thumbs" aria-label="Pages"></aside>
+                        <div class="viewer-scroll">
+                            <div class="page-holder" id="scan-holder">
+                                <img class="page-image" id="scan-page-img" alt="PDF page">
+                                <div class="overlay" id="scan-overlay"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <aside class="workspace__side">
+                    <div class="side-body">
                 <div id="scan-summary" class="summary-box"></div>
+                <div id="scan-result" class="result-box hidden"></div>
                 <div class="form-group">
                     <label class="form-label">Look for</label>
                     <div class="checkbox-grid" id="scan-kinds">
@@ -716,11 +748,21 @@
                     <button class="btn btn--primary" id="scan-run">🛡️ Scan document</button>
                 </div>
                 <div id="scan-results" class="scan-results"></div>
-                <div class="action-buttons hidden" id="scan-actions">
-                    <label class="tool-option">Box colour <input type="color" id="scan-color" value="#000000"></label>
-                    <button class="btn btn--outline" id="scan-select-all">Select all</button>
-                    <button class="btn btn--primary" id="scan-redact">⬛ Redact selected &amp; save</button>
-                </div>
+                    </div>
+                    <div class="side-footer hidden" id="scan-actions">
+                        <div class="form-group">
+                            <label class="form-label" for="scan-mode">How to remove it</label>
+                            <select id="scan-mode" class="form-control">
+                                <option value="box" selected>Black box - nothing left in its place</option>
+                                <option value="mask">Masked - keeps the last few characters</option>
+                            </select>
+                            <p class="hint hint--inline" id="scan-mode-hint">The original characters are deleted from the file either way. Masking writes something like <code>XXXXXXXXXXXX4291</code> back in, so a statement still reconciles.</p>
+                        </div>
+                        <label class="tool-option" id="scan-color-row">Box colour <input type="color" id="scan-color" value="#000000"></label>
+                        <button class="btn btn--outline" id="scan-select-all">Select all</button>
+                        <button class="btn btn--primary" id="scan-redact">⬛ Redact selected &amp; save</button>
+                    </div>
+                </aside>
             </div>
         </div>
 
@@ -986,6 +1028,6 @@
         </div>
     </footer>
 
-    <script src="app.js?v=4.14.0"></script>
+    <script src="app.js?v=4.15.0"></script>
 </body>
 </html>

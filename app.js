@@ -11,7 +11,7 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.14.0';
+const APP_VERSION = '4.15.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -270,6 +270,14 @@ const UI = {
     setupPickers() {
         $$('[data-pick]').forEach((btn) => {
             btn.addEventListener('click', () => $(btn.dataset.pick).click());
+        });
+        // Picking the same file twice fires no change event, because the
+        // input's value has not changed - so after redacting a document and
+        // choosing it again to check the result, nothing would happen.
+        // Clearing the value on the way into the dialog makes the second pick
+        // count as a new one.
+        $$('input[type="file"]').forEach((input) => {
+            input.addEventListener('click', () => { input.value = ''; });
         });
         $$('[data-drop]').forEach((zone) => {
             const input = $(`${zone.dataset.drop}-file`);
@@ -2580,68 +2588,259 @@ const CompareTool = {
 
 const ScanTool = {
     hits: [],
+    chosen: new Set(),
 
     init() {
-        $('scan-file').addEventListener('change', (e) => this.open(e.target.files[0]));
+        this.view = new DocView('scan', { onRender: () => this.drawMarks() });
+        $('scan-file').addEventListener('change', (e) => this.open(Array.from(e.target.files)));
         $('scan-run').addEventListener('click', () => this.run());
         $('scan-redact').addEventListener('click', () => this.redact());
-        $('scan-select-all').addEventListener('click', () => {
-            const boxes = $$('#scan-results input[type=checkbox]');
-            const turnOn = boxes.some((b) => !b.checked);
-            boxes.forEach((b) => { b.checked = turnOn; });
-        });
+        $('scan-select-all').addEventListener('click', () => this.selectAll());
+        $('scan-mode').addEventListener('change', () => this.modeChanged());
     },
 
-    async open(file) {
-        if (!file) return;
+    async open(files) {
+        const list = Array.isArray(files) ? files : [files].filter(Boolean);
+        if (!list.length) return;
+        this.files = list;
+        this.hits = [];
+        this.chosen = new Set();
+        $('scan-results').innerHTML = '';
+
+        if (list.length > 1) {
+            // Nobody ticks boxes across twenty files, so the choice of what to
+            // look for is made once and every match in every file is removed.
+            $('scan-viewer').classList.add('hidden');
+            $('scan-hint').textContent =
+                'Everything found in every file will be removed - there is no page to tick items off on. ' +
+                'Choose what to look for, then run it.';
+            $('scan-run').textContent = '🛡️ Scan and redact all files';
+            // How to remove it still has to be chosen - it is the run button
+            // that does the removing here, so only the two controls that need
+            // a list of hits are put away.
+            $('scan-actions').classList.remove('hidden');
+            $('scan-select-all').classList.add('hidden');
+            $('scan-redact').classList.add('hidden');
+            return batchChosen('scan', list);
+        }
+
+        $('scan-viewer').classList.remove('hidden');
+        $('scan-hint').textContent =
+            'Scan the document, then see exactly what will be removed marked on the page. ' +
+            'Click a mark, or a row in the list, to select or deselect it.';
+        $('scan-run').textContent = '🛡️ Scan document';
+        $('scan-select-all').classList.remove('hidden');
+        $('scan-redact').classList.remove('hidden');
+        const file = list[0];
         await UI.run('Opening document…', async () => {
-            const info = await engine.openDoc('scan', await fileToBytes(file), file.name);
-            $('scan-workspace').classList.remove('hidden');
-            $('scan-results').innerHTML = '';
+            const info = await this.view.load(file);
             $('scan-actions').classList.add('hidden');
+            $('scan-summary').classList.remove('hidden');
             $('scan-summary').innerHTML = `<strong>${file.name}</strong> - ${info.pages} page(s)`;
         });
     },
 
+    kinds() {
+        return $$('#scan-kinds input:checked').map((b) => b.value);
+    },
+
     async run() {
-        const kinds = $$('#scan-kinds input:checked').map((b) => b.value);
+        const kinds = this.kinds();
         if (!kinds.length) return UI.toast('Choose at least one thing to look for', 'error');
+
+        if (this.files && this.files.length > 1) return this.runBatch(kinds);
 
         await UI.run('Scanning for sensitive data…', async () => {
             const res = await engine.callJSON('scan_sensitive', 'scan', JSON.stringify(kinds));
             this.hits = res.hits;
-            const box = $('scan-results');
-
-            if (!res.total) {
-                box.innerHTML = '<div class="result-box">Nothing matching was found in this document.</div>';
-                $('scan-actions').classList.add('hidden');
-                return;
-            }
-
-            const chips = Object.entries(res.summary)
-                .map(([k, n]) => `<span class="chip">${k} · ${n}</span>`).join('');
-            box.innerHTML = `<div class="chip-row">${chips}</div>` + res.hits.map((h, i) => `
-                <label class="scan-row">
-                    <input type="checkbox" data-hit="${i}" checked>
-                    <span class="scan-kind">${h.kind}</span>
-                    <code class="scan-text">${h.text.replace(/[<>&]/g, '')}</code>
-                    <span class="muted">page ${h.page + 1}</span>
-                    <span class="muted scan-label">${h.label}</span>
-                </label>`).join('');
-            $('scan-actions').classList.remove('hidden');
-            UI.toast(`${res.total} item(s) found`, 'success');
+            // Everything found starts selected: the common case is removing
+            // all of it, and unticking the few exceptions is less work than
+            // ticking forty rows.
+            this.chosen = new Set(this.hits.map((_, i) => i));
+            this.renderList(res);
+            this.drawMarks();
+            if (res.total) UI.toast(`${res.total} item(s) found`, 'success');
         });
     },
 
-    async redact() {
-        const chosen = $$('#scan-results input[type=checkbox]')
-            .filter((b) => b.checked).map((b) => this.hits[Number(b.dataset.hit)]);
-        if (!chosen.length) return UI.toast('Select at least one item', 'error');
+    /** Scan and redact every chosen file, into one ZIP. */
+    runBatch(kinds) {
+        const mode = $('scan-mode').value;
+        const fill = $('scan-color').value;
+        let removed = 0;
+        const perKind = {};
+        return UI.run('Scanning and redacting files…', async () => {
+            const result = await runBatch({
+                files: this.files, docId: 'scan', suffix: 'redacted',
+                apply: async () => {
+                    const res = await engine.callJSON('scan_and_redact', 'scan',
+                                                      JSON.stringify(kinds), fill, mode);
+                    removed += res.total;
+                    Object.entries(res.summary).forEach(([k, n]) => {
+                        perKind[k] = (perKind[k] || 0) + n;
+                    });
+                    return engine.call('save', 'scan');
+                },
+                report: (html) => batchReport('scan', html),
+            });
+            if (!result.done) return;
+            // Say what was actually removed rather than only that it ran: a
+            // run that found nothing looks identical otherwise.
+            const chips = Object.entries(perKind)
+                .map(([k, n]) => `<span class="chip">${k} · ${n}</span>`).join('');
+            // Into the list area, not the progress box: overwriting that
+            // would throw away the names of any files that could not be done.
+            $('scan-results').innerHTML = removed
+                ? `<strong>${removed} item(s)</strong> removed across ${result.done} file(s).` +
+                  `<div class="chip-row">${chips}</div>`
+                : `<strong>Nothing matching was found</strong> in any of the ${result.done} file(s), ` +
+                  'so they were saved unchanged.';
+        });
+    },
 
-        await UI.run(`Redacting ${chosen.length} item(s)…`, async () => {
-            await engine.call('redact_hits', 'scan', JSON.stringify(chosen), $('scan-color').value);
+    renderList(res) {
+        const box = $('scan-results');
+        if (!res.total) {
+            box.innerHTML = '<div class="result-box">Nothing matching was found in this document.</div>';
+            $('scan-actions').classList.add('hidden');
+            return;
+        }
+
+        // Grouped by kind: a flat list of four hundred rows cannot be read,
+        // and what you usually want is "all the card numbers".
+        const byKind = {};
+        this.hits.forEach((h, i) => { (byKind[h.kind] = byKind[h.kind] || []).push(i); });
+
+        box.innerHTML = Object.entries(byKind).map(([kind, indexes]) => `
+            <section class="scan-group">
+                <header class="scan-group__head">
+                    <label class="checkbox-row">
+                        <input type="checkbox" data-kind="${kind}" checked>
+                        <strong>${kind}</strong> <span class="muted">${indexes.length}</span>
+                    </label>
+                    <span class="muted scan-label">${this.hits[indexes[0]].label}</span>
+                </header>
+                ${indexes.map((i) => `
+                    <label class="scan-row" data-row="${i}">
+                        <input type="checkbox" data-hit="${i}" checked>
+                        <code class="scan-text">${this.hits[i].text.replace(/[<>&]/g, '')}</code>
+                        <span class="muted">page ${this.hits[i].page + 1}</span>
+                    </label>`).join('')}
+            </section>`).join('');
+
+        $$('#scan-results input[data-hit]').forEach((b) => {
+            b.addEventListener('change', () => this.setChosen(Number(b.dataset.hit), b.checked));
+        });
+        $$('#scan-results input[data-kind]').forEach((b) => {
+            b.addEventListener('change', () => {
+                byKind[b.dataset.kind].forEach((i) => this.setChosen(i, b.checked));
+                this.syncBoxes();
+            });
+        });
+        // Clicking the row itself walks to that page, so a value in the list
+        // can be checked against where it actually sits before it is deleted.
+        $$('#scan-results .scan-row').forEach((row) => {
+            row.addEventListener('click', (e) => {
+                if (e.target.tagName === 'INPUT') return;
+                e.preventDefault();
+                this.goToHit(Number(row.dataset.row));
+            });
+        });
+
+        $('scan-actions').classList.remove('hidden');
+    },
+
+    setChosen(index, on) {
+        if (on) this.chosen.add(index); else this.chosen.delete(index);
+        this.markStyle(index);
+    },
+
+    /** Put every checkbox back in step with this.chosen. */
+    syncBoxes() {
+        $$('#scan-results input[data-hit]').forEach((b) => {
+            b.checked = this.chosen.has(Number(b.dataset.hit));
+        });
+    },
+
+    selectAll() {
+        const turnOn = this.chosen.size < this.hits.length;
+        this.chosen = new Set(turnOn ? this.hits.map((_, i) => i) : []);
+        this.syncBoxes();
+        $$('#scan-results input[data-kind]').forEach((b) => { b.checked = turnOn; });
+        this.drawMarks();
+    },
+
+    async goToHit(index) {
+        const hit = this.hits[index];
+        if (!hit) return;
+        if (hit.page !== this.view.page) await this.view.go(hit.page);
+        const mark = $$(`#scan-overlay [data-mark="${index}"]`)[0];
+        if (mark) {
+            mark.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            mark.classList.add('scan-mark--flash');
+            setTimeout(() => mark.classList.remove('scan-mark--flash'), 1200);
+        }
+    },
+
+    /** Draw a box over every hit on the page being viewed, so what is about
+     *  to be permanently deleted can be seen before it is. */
+    drawMarks() {
+        const overlay = this.view.overlay;
+        if (!overlay) return;
+        overlay.innerHTML = '';
+        this.hits.forEach((hit, index) => {
+            if (hit.page !== this.view.page) return;
+            hit.rects.forEach((r) => {
+                const el = document.createElement('div');
+                el.className = 'scan-mark';
+                el.dataset.mark = String(index);
+                el.title = `${hit.kind}: ${hit.text}`;
+                el.style.cssText = `left:${r.xFrac * 100}%;top:${r.yFrac * 100}%;` +
+                                   `width:${r.wFrac * 100}%;height:${r.hFrac * 100}%`;
+                el.addEventListener('click', () => {
+                    this.setChosen(index, !this.chosen.has(index));
+                    this.syncBoxes();
+                });
+                overlay.appendChild(el);
+            });
+            this.markStyle(index);
+        });
+    },
+
+    markStyle(index) {
+        const on = this.chosen.has(index);
+        $$(`#scan-overlay [data-mark="${index}"]`).forEach((el) => {
+            el.classList.toggle('scan-mark--off', !on);
+        });
+    },
+
+    /** A colour picker means nothing when the replacement is masked text. */
+    modeChanged() {
+        const masking = $('scan-mode').value === 'mask';
+        $('scan-color-row').classList.toggle('hidden', masking);
+        $('scan-redact').textContent = masking
+            ? '🔒 Mask selected & save' : '⬛ Redact selected & save';
+    },
+
+    async redact() {
+        const chosen = [...this.chosen].sort((a, b) => a - b).map((i) => this.hits[i]);
+        if (!chosen.length) return UI.toast('Select at least one item', 'error');
+        const mode = $('scan-mode').value;
+
+        await UI.run(`Removing ${chosen.length} item(s)…`, async () => {
+            await engine.call('redact_hits', 'scan', JSON.stringify(chosen),
+                              $('scan-color').value, mode);
             const bytes = await engine.call('save', 'scan');
-            download(bytes, 'redacted.pdf');
+            download(bytes, mode === 'mask' ? 'masked.pdf' : 'redacted.pdf');
+            // The document in the viewer is the redacted one now, so the marks
+            // and the list would be pointing at text that no longer exists.
+            this.hits = [];
+            this.chosen = new Set();
+            $('scan-results').innerHTML =
+                `<div class="result-box"><strong>${chosen.length} item(s)</strong> permanently removed. ` +
+                'Scan again to check nothing was missed.</div>';
+            $('scan-actions').classList.add('hidden');
+            await this.view.render();
             UI.toast(`${chosen.length} item(s) permanently removed`, 'success');
         });
     },
