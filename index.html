@@ -13,14 +13,14 @@
 
     <!-- SVG first for modern browsers; .ico covers older ones and the
          automatic /favicon.ico request. -->
-    <link rel="icon" href="favicon.svg?v=4.15.0" type="image/svg+xml">
-    <link rel="icon" href="favicon.ico?v=4.15.0" sizes="16x16 32x32 48x48">
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.15.0">
-    <link rel="manifest" href="site.webmanifest?v=4.15.0">
+    <link rel="icon" href="favicon.svg?v=4.16.0" type="image/svg+xml">
+    <link rel="icon" href="favicon.ico?v=4.16.0" sizes="16x16 32x32 48x48">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.16.0">
+    <link rel="manifest" href="site.webmanifest?v=4.16.0">
 
     <!-- ?v= busts the browser cache on redeploy: without it a stale app.js/style.css
          pair silently breaks the page. Bump APP_VERSION in app.js to match. -->
-    <link rel="stylesheet" href="style.css?v=4.15.0">
+    <link rel="stylesheet" href="style.css?v=4.16.0">
     <script src="https://cdn.jsdelivr.net/pyodide/v314.0.5/full/pyodide.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
@@ -29,7 +29,7 @@
     <header class="header">
         <div class="header__content">
             <h1 class="header__title">
-                <img class="header__logo" src="logo.svg?v=4.15.0" alt="" width="34" height="34">
+                <img class="header__logo" src="logo.svg?v=4.16.0" alt="" width="34" height="34">
                 MiyeePDF <span class="header__byline">Built by Vipin Nair</span>
             </h1>
             <div class="header__right">
@@ -875,6 +875,41 @@
             </div>
             <div class="panel hidden" id="export-workspace">
                 <div id="export-summary" class="summary-box"></div>
+
+                <!-- Shown when the pages are images: nothing can be exported
+                     from a scan until it has been read. -->
+                <div class="scan-notice hidden" id="export-scan-notice">
+                    <div class="scan-notice__body">
+                        <strong id="export-scan-title">These pages are scans.</strong>
+                        <span>The words are part of an image, so there is no text, table or heading to export yet. Reading the pages puts real text behind them.</span>
+                    </div>
+                    <div class="scan-notice__actions">
+                        <label class="tool-option" for="export-scan-lang">Language
+                            <select id="export-scan-lang" class="form-control form-control--small">
+                                <option value="eng">English</option>
+                                <option value="eng+hin">English + Hindi</option>
+                                <option value="hin">Hindi</option>
+                                <option value="eng+guj">English + Gujarati</option>
+                                <option value="eng+mar">English + Marathi</option>
+                                <option value="eng+tam">English + Tamil</option>
+                                <option value="eng+tel">English + Telugu</option>
+                                <option value="fra">French</option>
+                                <option value="deu">German</option>
+                                <option value="spa">Spanish</option>
+                            </select>
+                        </label>
+                        <label class="tool-option" title="Slower: checks each page for a sideways or upside-down scan first">
+                            <input type="checkbox" id="export-scan-upright"> Fix sideways pages
+                        </label>
+                        <button class="btn btn--primary btn--sm" id="export-scan-ocr">Read the pages</button>
+                    </div>
+                    <div class="progress-bar hidden" id="export-scan-bar">
+                        <div class="progress-fill" id="export-scan-fill"></div>
+                        <span class="progress-text" id="export-scan-pct">0%</span>
+                    </div>
+                    <p class="muted hidden" id="export-scan-status"></p>
+                </div>
+
                 <div class="export-grid">
                     <button class="export-card" id="export-doc">
                         <span class="export-icon">📄</span><strong>Word</strong>
@@ -1028,6 +1063,6 @@
         </div>
     </footer>
 
-    <script src="app.js?v=4.15.0"></script>
+    <script src="app.js?v=4.16.0"></script>
 </body>
 </html>
