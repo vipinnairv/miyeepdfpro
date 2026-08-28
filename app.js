@@ -11,7 +11,7 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.15.0';
+const APP_VERSION = '4.16.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -2430,6 +2430,56 @@ const ExportTool = {
         $('export-quality').addEventListener('input', (e) => {
             $('export-quality-value').textContent = e.target.value;
         });
+        $('export-scan-ocr').addEventListener('click', () => this.readScan());
+    },
+
+    /** Which pages have no text at all. Every export here reads text, so a
+     *  scan yields an empty Word file or "no tables detected" - which reads
+     *  as a broken export rather than as a document with nothing to read. */
+    async checkScanned(pages) {
+        const scanned = [];
+        for (let i = 0; i < pages; i++) {
+            if (await engine.call('needs_ocr', 'export', i)) scanned.push(i);
+        }
+        this.scanned = scanned;
+        const notice = $('export-scan-notice');
+        notice.classList.toggle('hidden', !scanned.length);
+        if (scanned.length) {
+            $('export-scan-title').textContent = scanned.length === pages
+                ? 'These pages are scans.'
+                : `${scanned.length} of ${pages} pages are scans.`;
+            $('export-scan-status').classList.add('hidden');
+        }
+    },
+
+    /** Read the scanned pages in place, so the exports below then work. */
+    async readScan() {
+        if (!this.scanned || !this.scanned.length) return;
+        const bar = $('export-scan-bar');
+        const status = $('export-scan-status');
+        bar.classList.remove('hidden');
+        status.classList.remove('hidden');
+        $('export-scan-ocr').disabled = true;
+        try {
+            const res = await recognisePages('export', this.scanned,
+                $('export-scan-lang').value,
+                (pct, label) => {
+                    $('export-scan-fill').style.width = `${pct}%`;
+                    $('export-scan-pct').textContent = `${pct}%`;
+                    if (label) status.textContent = label;
+                },
+                $('export-scan-upright').checked);
+            const doubt = res.uncertain ? ` ${res.uncertain} word(s) were hard to read.` : '';
+            status.textContent =
+                `${res.pages} page(s) read - the exports below will now find text.${doubt}`;
+            await this.checkScanned(this.pages);
+            if (this.scanned.length) $('export-scan-notice').classList.remove('hidden');
+            UI.toast('Pages read', 'success');
+        } catch (err) {
+            status.textContent = `Could not read the pages: ${UI.explain(err)}`;
+        } finally {
+            $('export-scan-ocr').disabled = false;
+        }
     },
 
     async open(file) {
@@ -2437,8 +2487,10 @@ const ExportTool = {
         this.name = file.name.replace(/\.pdf$/i, '');
         await UI.run('Opening document…', async () => {
             const info = await engine.openDoc('export', await fileToBytes(file), file.name);
+            this.pages = info.pages;
             $('export-workspace').classList.remove('hidden');
             $('export-summary').innerHTML = `<strong>${file.name}</strong> - ${info.pages} page(s)`;
+            await this.checkScanned(info.pages);
         });
     },
 

@@ -1673,6 +1673,137 @@ def export_docx(doc_id):
     return base64.b64encode(buf.getvalue()).decode()
 
 
+def _text_lines(page, clip=None, top=None):
+    """Words on the page grouped into the visual lines they sit on."""
+    words = page.get_text("words", clip=clip)
+    if top is not None:
+        words = [w for w in words if (w[1] + w[3]) / 2.0 > top]
+    if not words:
+        return []
+    words.sort(key=lambda w: ((w[1] + w[3]) / 2.0, w[0]))
+    lines = []
+    for w in words:
+        mid = (w[1] + w[3]) / 2.0
+        if lines and mid - lines[-1]["mid"] <= max((w[3] - w[1]) * 0.6, 2.0):
+            lines[-1]["words"].append(w)
+            lines[-1]["mid"] = (lines[-1]["mid"] + mid) / 2.0
+        else:
+            lines.append({"mid": mid, "words": [w]})
+    for line in lines:
+        line["words"].sort(key=lambda w: w[0])
+    return lines
+
+
+def _column_gutters(lines, tolerance):
+    """The vertical lanes of whitespace that run down a block of text.
+
+    Where a page draws no rules, the columns are held apart by the fact that
+    no line ever puts ink between them. Projecting every word onto the x axis
+    and looking for the stripes nothing reaches finds those lanes, and unlike
+    measuring the gaps line by line it works whether a column is aligned left
+    (a narration) or right (an amount) - a statement has both.
+
+    A single overlong cell is allowed to cross a lane rather than erasing it,
+    which is what `tolerance` is for.
+    """
+    left = min(w[0] for line in lines for w in line["words"])
+    right = max(w[2] for line in lines for w in line["words"])
+    if right - left < 20:
+        return None
+
+    width = int(right - left) + 2
+    ink = [0] * width
+    for line in lines:
+        touched = set()
+        for w in line["words"]:
+            for b in range(max(int(w[0] - left), 0), min(int(w[2] - left) + 1, width)):
+                touched.add(b)
+        for b in touched:
+            ink[b] += 1
+
+    spans, run_start = [], None
+    for b in range(width):
+        empty = ink[b] <= tolerance
+        if empty and run_start is None:
+            run_start = b
+        elif not empty and run_start is not None:
+            if b - run_start >= 3:
+                spans.append((run_start, b))
+            run_start = None
+    if run_start is not None and width - run_start >= 3:
+        spans.append((run_start, width))
+
+    # Column edges: the page margin, the middle of each lane, the far margin.
+    edges = [left - 1.0]
+    for a, b in spans:
+        if a == 0 or b >= width:
+            continue                      # the margins, not a gutter
+        edges.append(left + (a + b) / 2.0)
+    edges.append(right + 1.0)
+    return edges if len(edges) >= 3 else None
+
+
+def _rows_in_block(lines, edges):
+    """Lay a block's words out into the columns the gutters mark."""
+    ncols = len(edges) - 1
+    rows = []
+    for line in lines:
+        cells = [[] for _ in range(ncols)]
+        for w in line["words"]:
+            centre = (w[0] + w[2]) / 2.0
+            col = ncols - 1
+            for i in range(ncols):
+                if edges[i] <= centre < edges[i + 1]:
+                    col = i
+                    break
+            cells[col].append(w[4])
+        row = [" ".join(c).strip() for c in cells]
+        if any(row):
+            rows.append(row)
+    return rows
+
+
+def _borderless_tables(page):
+    """Find tables on a page that draws no lines at all.
+
+    Bank and deposit statements printed from a web page are the common case:
+    the columns are held apart by whitespace and a background tint, and once
+    such a page has been scanned and read back by OCR even the tint is gone,
+    so nothing but the layout is left to go on.
+    """
+    lines = _text_lines(page)
+    if len(lines) < 3:
+        return []
+
+    # Break the page into blocks at a wide vertical gap, so a heading or an
+    # address panel is not folded in with the table beneath it - each block
+    # gets its own columns, because they genuinely differ.
+    gaps = sorted(b["mid"] - a["mid"] for a, b in zip(lines, lines[1:]))
+    spacing = gaps[len(gaps) // 2] if gaps else 12.0
+    blocks, current = [], []
+    for i, line in enumerate(lines):
+        if i and (line["mid"] - lines[i - 1]["mid"]) > spacing * 2.2:
+            if len(current) >= 3:
+                blocks.append(current)
+            current = []
+        current.append(line)
+    if len(current) >= 3:
+        blocks.append(current)
+
+    tables = []
+    for block in blocks:
+        edges = _column_gutters(block, tolerance=max(1, len(block) // 6))
+        if not edges or len(edges) - 1 < 3:
+            continue
+        rows = _rows_in_block(block, edges)
+        # Only a block whose lines really do span its columns is a table; a
+        # paragraph that happens to have a ragged edge is not.
+        spanning = sum(1 for r in rows if sum(1 for c in r if c) >= 3)
+        if len(rows) >= 3 and spanning >= max(2, len(rows) * 0.5):
+            tables.append(rows)
+    return tables
+
+
 def _find_page_tables(page):
     """Detect tables on a page: ruled borders first, then column alignment.
 
@@ -1697,16 +1828,192 @@ def _find_page_tables(page):
     return found
 
 
+_AMOUNT_RE = None
+_DATE_RE = None
+
+
+def _looks_like_value(text):
+    """True for a date or a money figure - the things that start a record.
+
+    Used to tell a wrapped description ("BHAILALBHAI CHHATBAR" on its own
+    line) from a genuine new row that simply has no date, such as a closing
+    balance or a total.
+    """
+    global _AMOUNT_RE, _DATE_RE
+    import re
+    if _AMOUNT_RE is None:
+        _AMOUNT_RE = re.compile(r"^[(\-]?[\d,]+\.?\d*[)]?$")
+        _DATE_RE = re.compile(r"\d{1,4}[-/][A-Za-z\d]{2,3}[-/]\d{2,4}")
+    t = text.strip()
+    if not t:
+        return False
+    return bool(_DATE_RE.search(t)) or bool(_AMOUNT_RE.match(t))
+
+
+def _column_bounds(table):
+    """Vertical dividing lines between columns, taken from the header cells.
+
+    The header is the one row the ruling does get right, and its cells sit
+    edge to edge, so the boundary between two columns is the edge they share.
+    """
+    cells = [c for c in (table.header.cells if table.header else []) if c]
+    if len(cells) < 2:
+        return None
+    bounds = [table.bbox[0] - 1.0]
+    for left, right in zip(cells, cells[1:]):
+        bounds.append((left[2] + right[0]) / 2.0)
+    bounds.append(table.bbox[2] + 1.0)
+    return bounds
+
+
+def _rows_from_words(page, table):
+    """Rebuild a table's rows from where the words actually sit.
+
+    A bank or fund statement typically rules its header and then draws
+    nothing between the rows beneath it. A ruling-based reader sees one row
+    and returns every transaction crammed into single cells - twenty-one
+    payments arriving as one line of an Excel sheet. Reading positions
+    instead recovers the rows the page shows.
+
+    A line with no date or figure in it is treated as the wrapped remainder
+    of the line above rather than a row of its own, which is what a long
+    payee name is; a line that does carry one, such as a closing balance
+    with no date, stays a row.
+    """
+    bounds = _column_bounds(table)
+    if not bounds:
+        return None
+    ncols = len(bounds) - 1
+    header_bottom = max((c[3] for c in table.header.cells if c), default=table.bbox[1])
+
+    words = [w for w in page.get_text("words", clip=table.bbox)
+             if (w[1] + w[3]) / 2.0 > header_bottom]
+    if not words:
+        return None
+
+    # Group into visual lines: a word belongs to the line it vertically
+    # overlaps, which keeps a superscript or a slightly raised glyph on its
+    # own line rather than starting a new row.
+    words.sort(key=lambda w: ((w[1] + w[3]) / 2.0, w[0]))
+    lines = []
+    for w in words:
+        mid = (w[1] + w[3]) / 2.0
+        if lines and mid - lines[-1]["mid"] <= max((w[3] - w[1]) * 0.6, 2.0):
+            lines[-1]["words"].append(w)
+            lines[-1]["mid"] = (lines[-1]["mid"] + mid) / 2.0
+        else:
+            lines.append({"mid": mid, "words": [w]})
+
+    raw = []
+    for line in lines:
+        cells = [[] for _ in range(ncols)]
+        for w in sorted(line["words"], key=lambda w: w[0]):
+            centre = (w[0] + w[2]) / 2.0
+            col = ncols - 1
+            for i in range(ncols):
+                if bounds[i] <= centre < bounds[i + 1]:
+                    col = i
+                    break
+            cells[col].append(w[4])
+        row = [" ".join(c).strip() for c in cells]
+        if any(row):
+            raw.append(row)
+    if not raw:
+        return None
+
+    # Which columns carry dates and figures, judged over the whole table. A
+    # line that fills none of them is the wrapped tail of the line above: a
+    # long payee name, or the "2026" left over from a date range that broke
+    # across two lines. A line that fills one is a row in its own right, even
+    # with no date - a closing balance, or an opening one.
+    value_col = []
+    for i in range(ncols):
+        seen = [r[i] for r in raw if r[i]]
+        value_col.append(bool(seen) and
+                         sum(1 for c in seen if _looks_like_value(c)) >= len(seen) * 0.6)
+
+    rows = []
+    for row in raw:
+        wrapped = (not row[0]) and not any(row[i] for i in range(ncols) if value_col[i])
+        if wrapped and rows:
+            for i, part in enumerate(row):
+                if part:
+                    rows[-1][i] = (rows[-1][i] + " " + part).strip()
+        else:
+            rows.append(row)
+
+    return rows or None
+
+
+def _table_rows(page, table):
+    """The table's rows, read from the ruling unless the ruling failed.
+
+    Position-based reading can only find more rows than the ruling did when
+    the ruling left row separators out, so more rows is the signal that it
+    did. Where the ruling is complete, it stays the authority: it knows about
+    merged and spanning cells that word positions cannot see.
+    """
+    try:
+        ruled = table.extract()
+    except Exception:
+        ruled = None
+    ruled = [[("" if c is None else str(c).replace("\n", " ").strip()) for c in row]
+             for row in (ruled or [])]
+
+    try:
+        read = _rows_from_words(page, table)
+    except Exception:
+        read = None
+
+    if read and len(read) >= max(len(ruled), 1) * 2:
+        header = ruled[0] if ruled else [""] * len(read[0])
+        return [header] + read
+    return ruled
+
+
+def _no_tables_reason(doc):
+    """Why nothing came out - a scan and a table-less document are different
+    problems, and telling someone "no tables were detected" about a scan
+    sends them hunting a bug that is not there."""
+    blank = sum(1 for page in doc if not page.get_text().strip())
+    if blank == doc.page_count:
+        return ("This PDF is a scan: its pages are images, so there is no text "
+                "to pull a table from. Run OCR on it first, then export again.")
+    if blank:
+        return (f"No tables were detected. {blank} of {doc.page_count} page(s) are "
+                "scans with no text in them - run OCR on it first if the table is "
+                "on one of those.")
+    return "No tables were detected in this PDF."
+
+
+def _page_tables_as_rows(page):
+    """Every table on a page, as plain lists of rows.
+
+    Ruling is used where a page has it, because it knows about merged and
+    spanning cells that layout alone cannot show. Only when that finds
+    nothing worth having does the layout reader run - which is the case for a
+    statement printed from a web page, and for any scan, where no ruling
+    survives to be read.
+    """
+    tables = []
+    for table in _find_page_tables(page):
+        rows = _table_rows(page, table)
+        if rows:
+            tables.append(rows)
+    # Two columns for a seven-column statement is the detector failing, not a
+    # two-column table: a result that thin is not worth keeping over what the
+    # layout reader can recover.
+    if any(len(rows) >= 3 and len(rows[0]) >= 3 for rows in tables):
+        return tables
+    return _borderless_tables(page) or tables
+
+
 def export_tables(doc_id):
     """Detect tables and return them as CSV files."""
     doc = _doc(doc_id)
     out = []
     for pno, page in enumerate(doc):
-        for tno, table in enumerate(_find_page_tables(page), 1):
-            try:
-                rows = table.extract()
-            except Exception:
-                continue
+        for tno, rows in enumerate(_page_tables_as_rows(page), 1):
             if not rows:
                 continue
             buf = io.StringIO()
@@ -1729,17 +2036,13 @@ def export_tables_xlsx(doc_id):
     doc = _doc(doc_id)
     sheets = []
     for pno, page in enumerate(doc):
-        for tno, table in enumerate(_find_page_tables(page), 1):
-            try:
-                rows = table.extract()
-            except Exception:
-                continue
+        for tno, rows in enumerate(_page_tables_as_rows(page), 1):
             if not rows:
                 continue
             clean = [["" if c is None else str(c).replace("\n", " ") for c in row] for row in rows]
             sheets.append({"name": f"Page {pno + 1} Table {tno}", "rows": clean})
     if not sheets:
-        return json.dumps({"ok": False, "reason": "No tables were detected in this PDF."})
+        return json.dumps({"ok": False, "reason": _no_tables_reason(doc)})
     data = _build_xlsx(sheets, creator="MiyeePDF")
     return json.dumps({
         "ok": True,

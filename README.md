@@ -32,6 +32,8 @@ Fifteen tools, reachable from a dashboard on the home screen.
 - **OCR** - recognise scanned pages and write a real *invisible text layer* back into the PDF, so the output is genuinely searchable. Contrast is lifted before reading, which measurably helps tinted and low-contrast scans; a sideways or upside-down page can be found and turned upright first; and words the reader was unsure of are marked in amber so you can check them rather than trust them silently. The Edit tab can do this in place: open a scan there and it says so, reads the page on request, and then lets you edit it like any other document.
 - **Export** - a real editable **Word .docx** (headings, bold and italic preserved), a web page, plain text, tables to a formatted Excel workbook (or CSV), embedded images, and page renders to PNG or JPEG.
 
+  Statements are the hard case for table export, and they are handled three ways. Where a document rules only its header row and nothing between the transactions - which is what most bank statements do - the rows are rebuilt from where the words sit, so a hundred transactions arrive as a hundred spreadsheet rows instead of one. Where a document draws no lines at all, the columns are found from the lanes of whitespace running down the page, which works whether a column is aligned left like a narration or right like an amount. And where the pages are **scans**, the tab says so and offers to read them on the spot rather than quietly exporting an empty file.
+
 
 ## Finding your way around a long document
 
