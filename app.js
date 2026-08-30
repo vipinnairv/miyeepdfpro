@@ -11,7 +11,7 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.16.0';
+const APP_VERSION = '4.17.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -699,6 +699,10 @@ const EditTool = {
 
     init() {
         this.view = new DocView('edit', { onRender: () => this.drawSpans() });
+        // The Edit tab keeps its own shortcut, which stands aside while an
+        // inline editor is open so the browser's undo owns the box.
+        this.history = makeHistory('edit', this.view,
+                                   { bindKeys: false, onStep: (d) => this.step(d) });
         $('edit-file').addEventListener('change', (e) => this.open(e.target.files[0]));
 
         $$('[data-editmode]').forEach((btn) => btn.addEventListener('click', () => {
@@ -738,8 +742,6 @@ const EditTool = {
         $('edit-search').addEventListener('keydown', (e) => { if (e.key === 'Enter') this.search(); });
 
         $('edit-scan-ocr').addEventListener('click', () => this.ocrCurrent());
-        $('edit-undo').addEventListener('click', () => this.step('undo'));
-        $('edit-redo').addEventListener('click', () => this.step('redo'));
 
         // Ctrl+Z / Ctrl+Shift+Z while the Edit tab is showing and nothing is
         // being typed into - the browser's own undo owns the box while it is.
@@ -841,42 +843,15 @@ const EditTool = {
     /* ---- undo / redo ---- */
 
     /** Take a snapshot before a change, so it can be stepped back. */
-    async mark() {
-        try {
-            await engine.call('snapshot', this.view.docId);
-            await this.refreshHistory();
-        } catch (err) {
-            // History is a convenience; never let it block the edit itself.
-            console.warn('Could not record history', err);
-        }
-    },
+    mark() { return this.history.mark(); },
 
-    async refreshHistory() {
-        // Never allowed to throw: this runs straight after a successful edit,
-        // and letting it fail would report the edit itself as an error.
-        try {
-            const state = await engine.callJSON('history_state', this.view.docId);
-            $('edit-undo').disabled = !state.undo;
-            $('edit-redo').disabled = !state.redo;
-            return state;
-        } catch (err) {
-            console.warn('Could not read history state', err);
-            return { undo: 0, redo: 0 };
-        }
-    },
+    refreshHistory() { return this.history.refresh(); },
 
-    async step(direction) {
+    step(direction) {
+        // An open inline editor is holding text that the step is about to
+        // replace underneath it.
         if (this.editing) this.cancelEdit();
-        await UI.run(direction === 'undo' ? 'Undoing…' : 'Redoing…', async () => {
-            const res = await engine.callJSON(direction, this.view.docId);
-            if (!res.ok) {
-                return UI.toast(direction === 'undo' ? 'Nothing left to undo'
-                                                     : 'Nothing to redo', 'error');
-            }
-            await this.view.render();
-            await this.refreshHistory();
-            UI.toast(direction === 'undo' ? 'Change undone' : 'Change redone', 'success');
-        });
+        return this.history.step(direction);
     },
 
     /* ---- adding new text ---- */
@@ -1427,7 +1402,9 @@ const SignTool = {
     target: 'SIGNATURE',
 
     init() {
+        this.history = null;
         this.view = new DocView('sign', { onRender: () => this.drawItems() });
+        this.history = makeHistory('sign', this.view);
         $('sign-file').addEventListener('change', (e) => this.open(e.target.files[0]));
 
         $$('[data-signtool]').forEach((btn) => btn.addEventListener('click', () => {
@@ -1656,9 +1633,11 @@ const SignTool = {
                 values[field.name] = input.type === 'checkbox' ? input.checked : input.value;
             });
             if (Object.keys(values).length) {
+                await this.history.mark();
                 await engine.call('fill_form', 'sign', JSON.stringify(values), $('sign-flatten').checked);
             }
             if (this.items.length) {
+                await this.history.mark();
                 await engine.call('place_items', 'sign', JSON.stringify(this.items));
             }
             await this.view.save('signed.pdf');
@@ -1677,6 +1656,7 @@ const StampTool = {
 
     init() {
         this.view = new DocView('stamp', { onRender: () => this.drawStamps() });
+        this.history = makeHistory('stamp', this.view);
         $('stamp-file').addEventListener('change', (e) => this.open(Array.from(e.target.files)));
 
         $$('[data-stampsec]').forEach((btn) => btn.addEventListener('click', () => {
@@ -1734,7 +1714,10 @@ const StampTool = {
         $('stamp-viewer').classList.remove('hidden');
         $('stamp-summary').classList.add('hidden');
         $('stamp-result').classList.add('hidden');
-        await UI.run('Opening document…', () => this.view.load(this.file));
+        await UI.run('Opening document…', async () => {
+            await this.view.load(this.file);
+            await this.history.refresh();
+        });
     },
 
     /** True when the chosen files are to be treated as a batch. */
@@ -1778,11 +1761,13 @@ const StampTool = {
                                             Number($('wm-rotate').value), $('wm-tiled').checked);
         if (this.batching) return this.runOverFiles('Watermarking files…', 'watermarked', watermark);
         await UI.run('Applying watermark…', async () => {
+            await this.history.mark();
             await engine.call('watermark_text', 'stamp', $('wm-text').value || 'CONFIDENTIAL',
                               $('wm-pages').value, Number($('wm-size').value),
                               $('wm-color').value, Number($('wm-opacity').value) / 100,
                               Number($('wm-rotate').value), $('wm-tiled').checked);
             await this.view.render();
+            await this.history.refresh();
             UI.toast('Watermark applied - press Save to download', 'success');
         });
     },
@@ -1790,9 +1775,11 @@ const StampTool = {
     async applyStamps() {
         if (!this.stamps.length) return UI.toast('Place a stamp on the page first', 'error');
         await UI.run('Applying stamps…', async () => {
+            await this.history.mark();
             await engine.call('stamp', 'stamp', JSON.stringify(this.stamps));
             this.stamps = [];
             await this.view.render();
+            await this.history.refresh();
             UI.toast('Stamps applied', 'success');
         });
     },
@@ -1802,9 +1789,11 @@ const StampTool = {
                                          Number($('pn-start').value || 1));
         if (this.batching) return this.runOverFiles('Numbering files…', 'numbered', number);
         await UI.run('Adding page numbers…', async () => {
+            await this.history.mark();
             await engine.call('page_numbers', 'stamp', $('pn-format').value, $('pn-pos').value,
                               Number($('pn-start').value || 1));
             await this.view.render();
+            await this.history.refresh();
             UI.toast('Page numbers added', 'success');
         });
     },
@@ -1822,9 +1811,11 @@ const StampTool = {
                                                     file.name.replace(/\.pdf$/i, ''));
         if (this.batching) return this.runOverFiles('Adding header/footer…', 'headed', stampHF);
         await UI.run('Adding header/footer…', async () => {
+            await this.history.mark();
             await engine.call('header_footer', 'stamp', JSON.stringify(fields), 9, '#111111', 28,
                               (this.file && this.file.name.replace(/\.pdf$/i, '')) || 'document');
             await this.view.render();
+            await this.history.refresh();
             UI.toast('Header/footer added', 'success');
         });
     },
@@ -1842,10 +1833,12 @@ const StampTool = {
             });
         }
         await UI.run('Applying Bates numbering…', async () => {
+            await this.history.mark();
             const n = await engine.call('bates', 'stamp', $('bates-prefix').value, $('bates-suffix').value,
                                         Number($('bates-start').value || 1), Number($('bates-digits').value || 6),
                                         $('bates-pos').value);
             await this.view.render();
+            await this.history.refresh();
             UI.toast(`Bates numbering applied to ${n} pages`, 'success');
         });
     },
@@ -2300,6 +2293,10 @@ const RedactTool = {
 
     init() {
         this.view = new DocView('redact', { onRender: () => this.drawMarks() });
+        // Named apart from the "Undo mark" button, which takes back the last
+        // box you drew rather than a change already written into the file.
+        this.history = makeHistory('redact', this.view,
+                                   { undo: 'redact-doc-undo', redo: 'redact-doc-redo' });
         $('redact-file').addEventListener('change', (e) => this.open(e.target.files[0]));
         $('redact-undo').addEventListener('click', () => {
             for (let i = this.marks.length - 1; i >= 0; i--) {
@@ -2380,6 +2377,7 @@ const RedactTool = {
         const term = $('redact-term').value.trim();
         if (!term) return UI.toast('Enter text to redact', 'error');
         await UI.run('Finding and redacting…', async () => {
+            await this.history.mark();
             const n = await engine.call('redact_search', 'redact', term, '', $('redact-color').value);
             if (n) this.applied += n;
             await this.view.render();
@@ -2396,6 +2394,7 @@ const RedactTool = {
         }
         await UI.run('Applying redactions…', async () => {
             if (this.marks.length) {
+                await this.history.mark();
                 await engine.call('redact', 'redact', JSON.stringify(this.marks),
                               $('redact-images').checked, $('redact-color').value);
                 this.marks = [];
@@ -2637,6 +2636,80 @@ const CompareTool = {
 /* ------------------------------------------------------------------ */
 /* 11. Find sensitive data                                             */
 /* ------------------------------------------------------------------ */
+
+/** Undo and redo for a tab that changes its document in place.
+ *
+ * Watermarking, stamping, signing and redacting are all as destructive as
+ * editing text - a stamp on the wrong page or a Bates run started at the
+ * wrong number used to mean reloading the file and beginning again. The
+ * engine already keeps the snapshots; this is the shared wiring so each tab
+ * does not carry its own copy of it.
+ *
+ * @param key   the tab's key, used for its document and its button ids
+ * @param view  the DocView to redraw after stepping
+ */
+function makeHistory(key, view, ids = {}) {
+    const undoBtn = $(ids.undo || `${key}-undo`);
+    const redoBtn = $(ids.redo || `${key}-redo`);
+
+    const history = {
+        /** Record the state before a change, so it can be stepped back to. */
+        async mark() {
+            try {
+                await engine.call('snapshot', view.docId);
+                await history.refresh();
+            } catch (err) {
+                // History is a convenience; never let it block the change.
+                console.warn('Could not record history', err);
+            }
+        },
+
+        /** Never allowed to throw: this runs straight after a successful
+         *  change, and failing here would report that change as an error. */
+        async refresh() {
+            try {
+                const state = await engine.callJSON('history_state', view.docId);
+                if (undoBtn) undoBtn.disabled = !state.undo;
+                if (redoBtn) redoBtn.disabled = !state.redo;
+                return state;
+            } catch (err) {
+                console.warn('Could not read history state', err);
+                return { undo: 0, redo: 0 };
+            }
+        },
+
+        async step(direction) {
+            await UI.run(direction === 'undo' ? 'Undoing…' : 'Redoing…', async () => {
+                const res = await engine.callJSON(direction, view.docId);
+                if (!res.ok) {
+                    return UI.toast(direction === 'undo' ? 'Nothing left to undo'
+                                                         : 'Nothing to redo', 'error');
+                }
+                await view.render();
+                await history.refresh();
+                UI.toast(direction === 'undo' ? 'Change undone' : 'Change redone', 'success');
+            });
+        },
+    };
+
+    // A tab with something of its own to do first - the Edit tab has an open
+    // inline editor to close - passes onStep; otherwise the buttons step
+    // straight through.
+    const step = ids.onStep || history.step;
+    if (undoBtn) undoBtn.addEventListener('click', () => step('undo'));
+    if (redoBtn) redoBtn.addEventListener('click', () => step('redo'));
+    // Ctrl+Z / Ctrl+Shift+Z, but only while this tab is the one on screen.
+    // A tab that binds its own shortcut opts out rather than firing twice.
+    if (ids.bindKeys !== false) document.addEventListener('keydown', (e) => {
+        if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'z') return;
+        const panel = $(`${key}-tab`);
+        if (!panel || !panel.classList.contains('active')) return;
+        if (/^(INPUT|TEXTAREA)$/.test(e.target.tagName) || e.target.isContentEditable) return;
+        e.preventDefault();
+        step(e.shiftKey ? 'redo' : 'undo');
+    });
+    return history;
+}
 
 const ScanTool = {
     hits: [],

@@ -12,8 +12,8 @@ Fifteen tools, reachable from a dashboard on the home screen.
 
 **Edit**
 - **Edit Text** - tap any line or paragraph and type straight on the page; there is no dialog box. **Undo and redo** (Ctrl+Z / Ctrl+Shift+Z) cover every change, so a mistake no longer means reloading and losing your work. Clear a box to **delete** that text, switch to **Add text** to place new text anywhere, and **zoom** in for precise work on small type. **Scanned PDFs are editable too**: the page is read on the spot, and because the words you see there are pixels rather than text, an edit paints over the scan in its own paper colour (sampled from the page, so white, cream and grey scans all blend) before writing the new wording in. The editor uses the document's *own* embedded font at the page's own size and colour, so what you type is what you get, and the replacement is written back into the file in that same font. Paragraphs rewrap to fit. Plus real PDF annotations and a bookmarks/outline editor.
-- **Fill & Sign** - draw, type or upload a signature; place initials, text, dates and check marks; fill and flatten form fields.
-- **Watermark & Stamps** - watermarks, approval stamps, page numbers, headers/footers and legal **Bates numbering**. Takes several files at once, with Bates numbering running as one sequence across the whole bundle.
+- **Fill & Sign** - draw, type or upload a signature; place initials, text, dates and check marks; fill and flatten form fields. Undo and redo throughout.
+- **Watermark & Stamps** - watermarks, approval stamps, page numbers, headers/footers and legal **Bates numbering**, with **undo and redo** (Ctrl+Z / Ctrl+Shift+Z) over every one of them. Takes several files at once, with Bates numbering running as one sequence across the whole bundle.
 - **Find & Replace** - genuine search-and-replace inside a PDF, each replacement taking the font, size and colour of the text it replaces.
 
 **Organise**
@@ -25,7 +25,7 @@ Fifteen tools, reachable from a dashboard on the home screen.
 **Protect**
 - **Find Sensitive Data** - scan for PAN, GSTIN, Aadhaar, IFSC, card and account numbers, emails, phones and IPs, then permanently redact them. Card and Aadhaar numbers are checksum-verified (Luhn and Verhoeff) so ordinary figures are not flagged. **Everything found is marked on the page itself**, so you see exactly what is about to be deleted and can click a mark, a row or a whole category to change your mind - redaction is irreversible, and it should not be a leap of faith. Results are grouped by kind. Removal is either a **black box** or **masking**, which deletes the original characters and writes something like `XXXXXXXXXXXX4291` back in, so a statement still reconciles. Point it at a folder of files and it scans and redacts every one.
 - **Inspect & Sanitize** - reveal what travels with a PDF beyond its pages (author metadata, XMP, embedded files, JavaScript, hidden layers, annotations, links) and strip it before sharing.
-- **Redact** - remove content from the file rather than covering it, with a selectable box colour.
+- **Redact** - remove content from the file rather than covering it, with a selectable box colour. Undo and redo cover an applied redaction, separately from the button that takes back the last box you drew.
 - **Password Protect** - AES-256 encryption with per-permission control, and password removal. Password-protected files can be opened by every tool: you are asked to unlock once, and the rest of the app treats it like any other document.
 
 **Convert**
