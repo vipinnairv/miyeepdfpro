@@ -13,7 +13,8 @@ Fifteen tools, reachable from a dashboard on the home screen.
 **Edit**
 - **Search** - find a phrase across every page, with the line each hit sits on shown beside it, and the hit boxed on the page when you jump to it.
 - **Edit Text** - tap any line or paragraph and type straight on the page; there is no dialog box. **Undo and redo** (Ctrl+Z / Ctrl+Shift+Z) cover every change, so a mistake no longer means reloading and losing your work. Clear a box to **delete** that text, switch to **Add text** to place new text anywhere, and **zoom** in for precise work on small type. **Scanned PDFs are editable too**: the page is read on the spot, and because the words you see there are pixels rather than text, an edit paints over the scan in its own paper colour (sampled from the page, so white, cream and grey scans all blend) before writing the new wording in. The editor uses the document's *own* embedded font at the page's own size and colour, so what you type is what you get, and the replacement is written back into the file in that same font. Paragraphs rewrap to fit. Plus real PDF annotations and a bookmarks/outline editor.
-- **Fill & Sign** - draw, type or upload a signature; place initials, text, dates and check marks; fill and flatten form fields. Undo and redo throughout. This places a drawn signature on the page: it is **not** a digital signature, so there is no certificate and nothing proves who signed or detects a later change.
+- **Fill & Sign** - draw, type or upload a signature; place initials, text, dates and check marks; fill and flatten form fields. Undo and redo throughout. A drawn signature is a picture of one: it carries no certificate and proves nothing about who signed.
+- **Digital signature (DSC)** - a real certificate signature, applied in the browser. The document is sealed with a `.p12`/`.pfx` certificate so a reader shows who signed it and whether a single byte has changed since. Your certificate file and its password never leave the device: the engine reserves the slot and says which bytes must be covered, the signing happens in the browser, and the private key is never handed to it. **A hardware USB token cannot be used** - browsers cannot reach one - so this needs a certificate file; if yours lives only on a token, sign with the token's own software.
 - **Watermark & Stamps** - watermarks, approval stamps, page numbers, headers/footers and legal **Bates numbering**, with **undo and redo** (Ctrl+Z / Ctrl+Shift+Z) over every one of them. Takes several files at once, with Bates numbering running as one sequence across the whole bundle.
 - **Find & Replace** - genuine search-and-replace inside a PDF, each replacement taking the font, size and colour of the text it replaces.
 
@@ -92,6 +93,7 @@ MiyeePDF edits the actual document instead:
 | **Protect** | Whole document re-photographed to enable encryption | AES-256 applied to the document; text stays searchable |
 | **Compress** | Every page rasterized; text destroyed | Only images recompressed; text stays vector |
 | **Edit text** | White box over old text, new text drawn on top | Original text replaced, matching font, size and colour |
+| **Sign** | A picture of a signature, proving nothing | Optional real certificate signature, verified intact by an independent validator |
 | **Mask an ID** | Characters covered; still selectable underneath | Original deleted, a masked stub written in its place |
 
 ## First load
@@ -109,7 +111,7 @@ sw.js           service worker: offline support and engine caching
 vendor/         PyMuPDF WebAssembly wheel
 ```
 
-Built on [PyMuPDF](https://pymupdf.readthedocs.io/) 1.28.2 compiled to WebAssembly, running under [Pyodide](https://pyodide.org/) 314.0.5, with [Tesseract.js](https://tesseract.projectnaptha.com/) for OCR recognition and [JSZip](https://stuk.github.io/jszip/) for multi-file exports.
+Built on [PyMuPDF](https://pymupdf.readthedocs.io/) 1.28.2 compiled to WebAssembly, running under [Pyodide](https://pyodide.org/) 314.0.5, with [Tesseract.js](https://tesseract.projectnaptha.com/) for OCR recognition, [JSZip](https://stuk.github.io/jszip/) for multi-file exports and [node-forge](https://github.com/digitalbazaar/forge) for certificate signing.
 
 The PyMuPDF wheel is committed under `vendor/` deliberately: PyPI does not send CORS headers, so the browser must load it same-origin.
 
