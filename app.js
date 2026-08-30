@@ -11,7 +11,7 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.20.0';
+const APP_VERSION = '4.21.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -307,6 +307,18 @@ const Session = {
         return fresh;
     },
 };
+
+/** A Uint8Array as the binary string forge works in. Chunked, because
+ *  String.fromCharCode over a multi-megabyte array at once overflows the
+ *  argument stack. */
+function bytesToBinary(bytes) {
+    const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    let out = '';
+    for (let i = 0; i < arr.length; i += 0x8000) {
+        out += String.fromCharCode.apply(null, arr.subarray(i, i + 0x8000));
+    }
+    return out;
+}
 
 function formatSize(bytes) {
     if (bytes < 1024) return `${bytes} B`;
@@ -1700,6 +1712,7 @@ const SignTool = {
         this.history = null;
         this.view = new DocView('sign', { onRender: () => this.drawItems() });
         this.history = makeHistory('sign', this.view);
+        this.setupDsc();
         $('sign-file').addEventListener('change', (e) => this.open(e.target.files[0]));
 
         $$('[data-signtool]').forEach((btn) => btn.addEventListener('click', () => {
@@ -1918,6 +1931,119 @@ const SignTool = {
             UI.toast('Ready - click the page to place it', 'success');
         };
         img.src = dataUrl;
+    },
+
+    /* ---- digital signature (DSC) ----------------------------------------
+     *
+     * A drawn signature is a picture of one. This is the real thing: the
+     * document is sealed with a certificate, so a reader can say who signed
+     * it and whether a single byte changed afterwards.
+     *
+     * The private key never reaches the PDF engine. The engine reserves a
+     * slot, says which bytes the signature must cover, and this code signs
+     * those bytes here in the browser and hands back the result. The
+     * certificate file and its password stay on the device throughout.
+     */
+    setupDsc() {
+        $('dsc-file').addEventListener('change', () => this.readCertificate());
+        $('dsc-pass').addEventListener('change', () => this.readCertificate());
+        $('dsc-sign').addEventListener('click', () => this.signDigitally());
+        $('dsc-visible').addEventListener('change', (e) => {
+            $('dsc-place').classList.toggle('hidden', !e.target.checked);
+        });
+    },
+
+    /** Open the certificate so the signer can be named before signing, and
+     *  a wrong password is caught here rather than half way through. */
+    async readCertificate() {
+        const file = $('dsc-file').files[0];
+        const box = $('dsc-who');
+        if (!file) { box.classList.add('hidden'); this.dsc = null; return; }
+        try {
+            const bytes = await fileToBytes(file);
+            const p12 = forge.pkcs12.pkcs12FromAsn1(
+                forge.asn1.fromDer(forge.util.createBuffer(bytesToBinary(bytes))),
+                $('dsc-pass').value);
+            const keyBags = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag });
+            const plainBags = p12.getBags({ bagType: forge.pki.oids.keyBag });
+            const key = (keyBags[forge.pki.oids.pkcs8ShroudedKeyBag] || [])
+                .concat(plainBags[forge.pki.oids.keyBag] || [])
+                .map((b) => b.key).find(Boolean);
+            const certs = (p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag] || [])
+                .map((b) => b.cert).filter(Boolean);
+            if (!key || !certs.length) throw new Error('No key or certificate in that file');
+            // The signing certificate is the one this key belongs to; the
+            // others are the chain and are included but not signed with.
+            const signer = certs.find((c) => c.publicKey && c.publicKey.n &&
+                                             c.publicKey.n.equals(key.n)) || certs[0];
+            this.dsc = { key, signer, certs };
+            const cn = (signer.subject.getField('CN') || {}).value || 'this certificate';
+            box.classList.remove('hidden');
+            box.innerHTML = `Will sign as <strong>${cn.replace(/[<>&]/g, '')}</strong>, ` +
+                            `valid until ${signer.validity.notAfter.toLocaleDateString()}.`;
+        } catch (err) {
+            this.dsc = null;
+            box.classList.remove('hidden');
+            box.innerHTML = /[Ii]nvalid password|MAC/.test(String(err.message || err))
+                ? '<span class="warn">That password did not open the certificate file.</span>'
+                : `<span class="warn">Could not read that certificate: ${UI.explain(err)}</span>`;
+        }
+    },
+
+    async signDigitally() {
+        if (!this.view.info) return UI.toast('Open a PDF first', 'error');
+        if (!this.dsc) {
+            await this.readCertificate();
+            if (!this.dsc) return UI.toast('Choose a certificate file and its password first', 'error');
+        }
+        const visible = $('dsc-visible').checked;
+        // Fractions of the page, so the box lands in the same place whatever
+        // the paper size.
+        const corners = {
+            tl: { x0: 0.06, y0: 0.05, x1: 0.44, y1: 0.15 },
+            tr: { x0: 0.56, y0: 0.05, x1: 0.94, y1: 0.15 },
+            bl: { x0: 0.06, y0: 0.84, x1: 0.44, y1: 0.94 },
+            br: { x0: 0.56, y0: 0.84, x1: 0.94, y1: 0.94 },
+        };
+        const box = corners[$('dsc-corner').value] || corners.bl;
+
+        await UI.run('Signing…', async () => {
+            const cn = (this.dsc.signer.subject.getField('CN') || {}).value || '';
+            await engine.callJSON('prepare_signature', 'sign', this.view.page,
+                                  box.x0, box.y0, box.x1, box.y1,
+                                  cn, $('dsc-reason').value, $('dsc-location').value, '', visible);
+            let signed;
+            try {
+                const payload = await engine.call('signature_payload', 'sign');
+                const p7 = forge.pkcs7.createSignedData();
+                p7.content = forge.util.createBuffer(bytesToBinary(payload));
+                this.dsc.certs.forEach((c) => p7.addCertificate(c));
+                p7.addSigner({
+                    key: this.dsc.key,
+                    certificate: this.dsc.signer,
+                    digestAlgorithm: forge.pki.oids.sha256,
+                    authenticatedAttributes: [
+                        { type: forge.pki.oids.contentType, value: forge.pki.oids.data },
+                        { type: forge.pki.oids.messageDigest },
+                        { type: forge.pki.oids.signingTime, value: new Date() },
+                    ],
+                });
+                // Detached: the signature covers the document's bytes without
+                // carrying a copy of them.
+                p7.sign({ detached: true });
+                const der = forge.asn1.toDer(p7.toAsn1()).getBytes();
+                signed = await engine.call('finish_signature', 'sign', forge.util.bytesToHex(der));
+            } catch (err) {
+                await engine.call('cancel_signature', 'sign');
+                throw err;
+            }
+            download(signed, 'signed-digitally.pdf');
+            const res = $('dsc-result');
+            res.classList.remove('hidden');
+            res.innerHTML = `Signed and saved. The file is sealed as it stands now: any later change ` +
+                            `to it will show up as a broken signature in a reader.`;
+            UI.toast('Digitally signed', 'success');
+        });
     },
 
     async save() {
