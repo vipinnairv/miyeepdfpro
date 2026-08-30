@@ -1333,14 +1333,15 @@ _XLSX_STYLES_XML = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <border><left/><right/><top/><bottom/><diagonal/></border>
 <border><left style="thin"><color rgb="FFD8DEE2"/></left><right style="thin"><color rgb="FFD8DEE2"/></right><top style="thin"><color rgb="FFD8DEE2"/></top><bottom style="thin"><color rgb="FFD8DEE2"/></bottom><diagonal/></border>
 </borders>
+<numFmts count="1"><numFmt numFmtId="164" formatCode="#,##0.00"/></numFmts>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
 <cellXfs count="6">
 <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
 <xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>
 <xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1"/>
 <xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1"/>
-<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="right"/></xf>
-<xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right"/></xf>
+<xf numFmtId="164" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right"/></xf>
+<xf numFmtId="164" fontId="0" fillId="3" borderId="1" xfId="0" applyNumberFormat="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right"/></xf>
 </cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 </styleSheet>"""
@@ -2065,17 +2066,76 @@ def _page_tables_as_rows(page):
     statement printed from a web page, and for any scan, where no ruling
     survives to be read.
     """
-    tables = []
+    ruled = []
     for table in _find_page_tables(page):
         rows = _table_rows(page, table)
         if rows:
-            tables.append(rows)
-    # Two columns for a seven-column statement is the detector failing, not a
-    # two-column table: a result that thin is not worth keeping over what the
-    # layout reader can recover.
-    if any(len(rows) >= 3 and len(rows[0]) >= 3 for rows in tables):
-        return tables
-    return _borderless_tables(page) or tables
+            ruled.append(rows)
+    loose = _borderless_tables(page)
+
+    # Neither reader is right often enough to be trusted on a threshold. A
+    # detector that has misread a page gives itself away by the shape of what
+    # it produces - a grid of mostly empty cells, or two columns where the
+    # page plainly has seven - so both are scored and the better one wins.
+    if not loose:
+        chosen = ruled
+    elif not ruled:
+        chosen = loose
+    else:
+        chosen = loose if _table_score(loose) > _table_score(ruled) else ruled
+    return [t for t in (_tidy_table(rows) for rows in chosen) if t]
+
+
+def _tidy_table(rows):
+    """Drop what a layout reader leaves behind but a spreadsheet should not.
+
+    Reading a page by position produces a column wherever the page happened
+    to leave a gap, so a table arrives with empty columns down its side and
+    a stray column holding nothing but the "%" that follows every rate. The
+    figures are right either way; the sheet is only usable without them.
+    """
+    if not rows:
+        return rows
+    width = max(len(r) for r in rows)
+    grid = [list(r) + [""] * (width - len(r)) for r in rows]
+
+    # A column carrying one short token and nothing else is a unit, not a
+    # column: it belongs on the end of the value it qualifies.
+    for i in range(width - 1, 0, -1):
+        values = {str(grid[r][i]).strip() for r in range(len(grid)) if str(grid[r][i]).strip()}
+        if len(values) == 1 and len(next(iter(values))) <= 2:
+            unit = next(iter(values))
+            for row in grid:
+                if str(row[i]).strip():
+                    row[i - 1] = (str(row[i - 1]).strip() + " " + unit).strip()
+                    row[i] = ""
+
+    keep = [i for i in range(width) if any(str(r[i]).strip() for r in grid)]
+    tidy = [[r[i] for i in keep] for r in grid]
+    return [r for r in tidy if any(str(c).strip() for c in r)]
+
+
+def _table_score(tables):
+    """How much a set of extracted tables looks like real tables.
+
+    Density is the signal: a correct grid is mostly full, while a misread one
+    scatters a few words across a wide grid of blanks. Width is worth a
+    little too, since collapsing seven columns into two loses information
+    that no amount of density makes up for.
+    """
+    cells = filled = 0
+    widest = 0
+    for rows in tables:
+        if not rows:
+            continue
+        width = max(len(r) for r in rows)
+        widest = max(widest, width)
+        for row in rows:
+            cells += width
+            filled += sum(1 for c in row if str(c).strip())
+    if not cells:
+        return 0.0
+    return (filled / cells) * min(widest, 12) / 12.0
 
 
 def export_tables(doc_id):
@@ -2099,10 +2159,114 @@ def export_tables(doc_id):
     return json.dumps(out)
 
 
-def export_tables_xlsx(doc_id):
-    """Detect tables and return them as one real .xlsx workbook, one sheet
-    per table -- formatted (bold header, borders, banded rows, auto-fit
-    columns, frozen header) rather than a bare grid of values."""
+def _document_grid(doc, min_fill=0.4):
+    """One set of columns for the whole document, and every row laid into it.
+
+    A statement running over thirty-six pages is one table, but read page by
+    page it comes back as thirty-six grids whose column counts disagree - a
+    leading column that exists on page one because of a stray full stop, and
+    not on page two. Stacking those loses the alignment that makes the sheet
+    worth having.
+
+    So the columns are worked out once, over every line in the document at
+    once: a lane of whitespace has to be clear on nearly every line of every
+    page to count, which is a far stronger signal than one page can give.
+    Rows too sparse to be data - a letterhead, an address, a page number -
+    are left out, since repeating them between every page's figures is what
+    made the combined sheet unusable in the first place.
+    """
+    pooled, per_page = [], []
+    for pno, page in enumerate(doc):
+        lines = _text_lines(page)
+        per_page.append((pno, lines))
+        pooled.extend(lines)
+    if len(pooled) < 3:
+        return []
+
+    edges = _column_gutters(pooled, tolerance=max(1, len(pooled) // 40))
+    if not edges or len(edges) - 1 < 2:
+        return []
+    edges = _split_by_header(pooled, edges)
+    ncols = len(edges) - 1
+
+    out = []
+    for pno, lines in per_page:
+        for row in _rows_in_block(lines, edges):
+            if sum(1 for c in row if str(c).strip()) >= max(2, ncols * min_fill):
+                out.append([f"Page {pno + 1}"] + row)
+    return out
+
+
+def _combined_header(rows):
+    """Turn the document's first rows into one header line.
+
+    A column heading printed on two lines - "Original" above "Principal" -
+    reads as two rows in a grid, and a spreadsheet wants it as one cell. The
+    continuation is recognised by being sparser than the line above it and
+    carrying no figures, so a genuine first record is never folded into the
+    heading.
+    """
+    if not rows:
+        return rows
+    head = list(rows[0])
+    head[0] = "Source"
+    body = rows[1:]
+    while body:
+        nxt = body[0]
+        filled_head = sum(1 for c in head[1:] if str(c).strip())
+        filled_next = sum(1 for c in nxt[1:] if str(c).strip())
+        if filled_next >= filled_head or any(_looks_like_value(str(c)) for c in nxt[1:]):
+            break
+        for i in range(1, len(head)):
+            if i < len(nxt) and str(nxt[i]).strip():
+                head[i] = (str(head[i]).strip() + " " + str(nxt[i]).strip()).strip()
+        body = body[1:]
+    return [head] + body
+
+
+def _combine_tables(sheets):
+    """Fold every table into one sheet.
+
+    A thirty-six page statement is one table that happens to be printed
+    across thirty-six pages, and thirty-six worksheets of it cannot be
+    sorted, totalled or filtered as the single list it really is. Tables
+    sharing a header are run together under one copy of it; a table with a
+    different header starts a fresh block, so nothing is silently stacked
+    under a heading that does not describe it.
+    """
+    width = max((max(len(r) for r in s["rows"]) for s in sheets if s["rows"]), default=0)
+    if not width:
+        return {"name": "All tables", "rows": []}
+
+    out = []
+    last_header = None
+    for sheet in sheets:
+        rows = [list(r) + [""] * (width - len(r)) for r in sheet["rows"] if any(str(c).strip() for c in r)]
+        if not rows:
+            continue
+        header, body = rows[0], rows[1:]
+        same = last_header is not None and [c.strip().lower() for c in header] == last_header
+        if not same:
+            if out:
+                out.append([""] * (width + 1))     # a blank line between blocks
+            out.append(["Source"] + header)
+            last_header = [c.strip().lower() for c in header]
+        # Every row says which page it came from, so a figure can always be
+        # traced back to the page it was printed on.
+        for row in body:
+            out.append([sheet["name"]] + row)
+    return {"name": "All tables", "rows": out}
+
+
+def export_tables_xlsx(doc_id, combine=False):
+    """Detect tables and return them as one real .xlsx workbook -- formatted
+    (bold header, borders, banded rows, auto-fit columns, frozen header)
+    rather than a bare grid of values.
+
+    combine=False gives a worksheet per table; combine=True folds them all
+    into one sheet, which is what a statement running over many pages
+    actually is.
+    """
     doc = _doc(doc_id)
     sheets = []
     for pno, page in enumerate(doc):
@@ -2111,6 +2275,13 @@ def export_tables_xlsx(doc_id):
                 continue
             clean = [["" if c is None else str(c).replace("\n", " ") for c in row] for row in rows]
             sheets.append({"name": f"Page {pno + 1} Table {tno}", "rows": clean})
+    if sheets and combine:
+        # One grid for the whole document beats stacking grids that disagree
+        # about how many columns there are; the per-page fold is kept for the
+        # documents where that finds nothing.
+        rows = _document_grid(doc)
+        sheets = [{"name": "All tables", "rows": _combined_header(rows)}] if rows \
+            else [_combine_tables(sheets)]
     if not sheets:
         return json.dumps({"ok": False, "reason": _no_tables_reason(doc)})
     data = _build_xlsx(sheets, creator="MiyeePDF")
