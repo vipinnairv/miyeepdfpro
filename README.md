@@ -33,6 +33,8 @@ Fifteen tools, reachable from a dashboard on the home screen.
 - **OCR** - recognise scanned pages and write a real *invisible text layer* back into the PDF, so the output is genuinely searchable. Contrast is lifted before reading, which measurably helps tinted and low-contrast scans; a sideways or upside-down page can be found and turned upright first; and words the reader was unsure of are marked in amber so you can check them rather than trust them silently. The Edit tab can do this in place: open a scan there and it says so, reads the page on request, and then lets you edit it like any other document.
 - **Export** - a real editable **Word .docx** (headings, bold and italic preserved), a web page, plain text, tables to a formatted Excel workbook (or CSV), embedded images, and page renders to PNG or JPEG.
 
+  **All tables can come out in one sheet**, which is what a statement printed over thirty-six pages actually is: the columns are worked out once across the whole document rather than page by page, so pages whose grids disagree still line up, the letterhead repeated on every page is left out, a heading split over two lines is joined back into one, and every row carries the page it came from. Amounts arrive as real numbers with thousands separators, right-aligned, under a frozen header.
+
   Statements are the hard case for table export, and they are handled three ways. Where a document rules only its header row and nothing between the transactions - which is what most bank statements do - the rows are rebuilt from where the words sit, so a hundred transactions arrive as a hundred spreadsheet rows instead of one. Where a document draws no lines at all, the columns are found from the lanes of whitespace running down the page, which works whether a column is aligned left like a narration or right like an amount. And where the pages are **scans**, the tab says so and offers to read them on the spot rather than quietly exporting an empty file.
 
 
@@ -71,6 +73,12 @@ used to discard changes in silence. Any tab with unsaved changes now says so
 above its Save button and marks the button itself, and the browser asks
 before you leave. Saving, or stepping back to the document you opened,
 clears it.
+
+A stray Back or a refresh no longer costs you the work either. The document
+you are working on is kept in the browser's own storage **on your device**
+and offered back the next time the page opens, with a Restore or Discard
+choice rather than silently reappearing. Nothing is uploaded to keep it, and
+saving the file clears it.
 
 ## Real redaction, real encryption
 

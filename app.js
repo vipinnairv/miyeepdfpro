@@ -11,7 +11,7 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.19.0';
+const APP_VERSION = '4.20.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -179,9 +179,18 @@ function download(data, filename, mime = 'application/pdf') {
  */
 const Dirty = {
     slots: new Set(),
+    names: {},
 
-    touch(docId) { this.slots.add(docId); this.show(docId); },
-    clear(docId) { this.slots.delete(docId); this.show(docId); },
+    touch(docId) {
+        this.slots.add(docId);
+        this.show(docId);
+        Session.remember(docId, this.names[docId] || '');
+    },
+    clear(docId) {
+        this.slots.delete(docId);
+        this.show(docId);
+        Session.forget(docId);
+    },
     has() { return this.slots.size > 0; },
 
     /** Mark the tab's Save button, so "I have not saved this" is visible
@@ -202,6 +211,102 @@ window.addEventListener('beforeunload', (e) => {
     e.preventDefault();
     e.returnValue = '';
 });
+
+/** Keeps the document you are working on across a reload.
+ *
+ * Everything here lives in memory, so a stray Back, a refresh or a phone
+ * killing the tab used to throw away an afternoon's work with no way to get
+ * it back. The working copy is written to IndexedDB on the device - the same
+ * promise as the rest of the app, nothing leaves it - and offered back the
+ * next time the page opens.
+ *
+ * Only the document being worked on is kept, not a history of files: this is
+ * a way to survive an accident, not an archive of everything you have opened.
+ */
+const Session = {
+    DB: 'miyee-session',
+    STORE: 'documents',
+    MAX_AGE_MS: 7 * 24 * 60 * 60 * 1000,
+    // A save costs a serialise of the whole document, so edits are allowed to
+    // settle rather than writing on every keystroke.
+    DEBOUNCE_MS: 2500,
+
+    _timers: {},
+
+    open() {
+        if (this._db) return this._db;
+        this._db = new Promise((resolve, reject) => {
+            const req = indexedDB.open(this.DB, 1);
+            req.onupgradeneeded = () => {
+                if (!req.result.objectStoreNames.contains(this.STORE)) {
+                    req.result.createObjectStore(this.STORE);
+                }
+            };
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+        }).catch((err) => {
+            // Private windows and locked-down browsers refuse storage. That
+            // is a lost convenience, never a reason to break the app.
+            console.warn('Session storage unavailable', err);
+            return null;
+        });
+        return this._db;
+    },
+
+    async _tx(mode, run) {
+        const db = await this.open();
+        if (!db) return null;
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(this.STORE, mode);
+            const req = run(tx.objectStore(this.STORE));
+            tx.oncomplete = () => resolve(req && req.result);
+            tx.onerror = () => reject(tx.error);
+        }).catch((err) => { console.warn('Session write failed', err); return null; });
+    },
+
+    /** Remember the current state of one tab's document, after a pause. */
+    remember(docId, fileName) {
+        clearTimeout(this._timers[docId]);
+        this._timers[docId] = setTimeout(async () => {
+            try {
+                const bytes = await engine.call('save', docId);
+                await this._tx('readwrite', (store) => store.put({
+                    docId, fileName, at: Date.now(),
+                    bytes: bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes),
+                }, docId));
+            } catch (err) {
+                console.warn('Could not keep the session', err);
+            }
+        }, this.DEBOUNCE_MS);
+    },
+
+    forget(docId) {
+        clearTimeout(this._timers[docId]);
+        return this._tx('readwrite', (store) => store.delete(docId));
+    },
+
+    async saved() {
+        const db = await this.open();
+        if (!db) return [];
+        const all = await new Promise((resolve) => {
+            const out = [];
+            const tx = db.transaction(this.STORE, 'readonly');
+            const req = tx.objectStore(this.STORE).openCursor();
+            req.onsuccess = () => {
+                const cur = req.result;
+                if (!cur) return resolve(out);
+                out.push(cur.value);
+                cur.continue();
+            };
+            req.onerror = () => resolve(out);
+        });
+        const fresh = all.filter((e) => Date.now() - e.at < this.MAX_AGE_MS);
+        // Anything older than a week is stale enough that offering it back
+        // would be a puzzle rather than a rescue.
+        all.filter((e) => !fresh.includes(e)).forEach((e) => this.forget(e.docId));
+        return fresh;
+    },
+};
 
 function formatSize(bytes) {
     if (bytes < 1024) return `${bytes} B`;
@@ -265,6 +370,57 @@ const UI = {
         // waiting for it here is what made the page look frozen on first visit.
         Tools.forEach((t) => { if (t.init) t.init(); });
         this.bootEngine();
+        this.offerRestore();
+    },
+
+    /** Offer back a document that a reload would otherwise have discarded. */
+    async offerRestore() {
+        let saved = [];
+        try {
+            saved = await Session.saved();
+        } catch (err) {
+            return;                       // storage refused; nothing to offer
+        }
+        if (!saved.length) return;
+
+        const banner = $('restore-banner');
+        const which = saved.map((e) => e.fileName || 'a document').join(', ');
+        $('restore-what').textContent = saved.length === 1
+            ? `You were working on ${which}.`
+            : `You were working on ${saved.length} documents: ${which}.`;
+        banner.classList.remove('hidden');
+
+        $('restore-yes').onclick = async () => {
+            banner.classList.add('hidden');
+            await this.run('Restoring your work…', async () => {
+                for (const entry of saved) {
+                    const tool = Tools.find((t) => t.view && t.view.docId === entry.docId);
+                    await engine.call('open_doc', entry.docId, entry.bytes);
+                    Dirty.names[entry.docId] = entry.fileName;
+                    if (tool) {
+                        // Put the tab back on screen showing the document,
+                        // and mark it unsaved, because it still is.
+                        tool.view.info = await engine.callJSON('doc_info', entry.docId);
+                        tool.view.pages = tool.view.info.pages;
+                        tool.view.page = 0;
+                        $(`${tool.view.key}-workspace`).classList.remove('hidden');
+                        tool.view.buildThumbs();
+                        await tool.view.render();
+                        if (tool.history) await tool.history.refresh();
+                    }
+                    Dirty.slots.add(entry.docId);
+                    Dirty.show(entry.docId);
+                }
+                const first = Tools.find((t) => t.view && t.view.docId === saved[0].docId);
+                if (first) this.showTab(first.view.key);
+                this.toast('Your work is back - it was never uploaded anywhere', 'success');
+            });
+        };
+
+        $('restore-no').onclick = async () => {
+            banner.classList.add('hidden');
+            for (const entry of saved) await Session.forget(entry.docId);
+        };
     },
 
     setupTabs() {
@@ -664,6 +820,7 @@ class DocView {
         const bytes = await fileToBytes(file);
         this.file = file;
         this.info = await engine.openDoc(this.docId, bytes, file.name);
+        Dirty.names[this.docId] = file.name;
         Dirty.clear(this.docId);
         this.pages = this.info.pages;
         this.page = 0;
@@ -2703,12 +2860,16 @@ const ExportTool = {
 
     async tablesXlsx() {
         await UI.run('Detecting tables…', async () => {
-            const result = await engine.callJSON('export_tables_xlsx', 'export');
+            const one = $('export-tables-one-sheet').checked;
+            const result = await engine.callJSON('export_tables_xlsx', 'export', one);
             if (!result.ok) return this.result(result.reason);
             const mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
             download(b64ToBytes(result.b64), `${this.name}-tables.xlsx`, mime);
-            this.result(`Built one Excel workbook with <strong>${result.sheets.length}</strong> sheet(s): ` +
-                        result.sheets.map((s) => `${s.name} (${s.rows}×${s.cols})`).join(', '));
+            this.result(one
+                ? `Built one sheet holding <strong>${result.sheets[0].rows}</strong> rows ` +
+                  `× ${result.sheets[0].cols} columns, with a column naming the page each row came from.`
+                : `Built one Excel workbook with <strong>${result.sheets.length}</strong> sheet(s): ` +
+                  result.sheets.map((s) => `${s.name} (${s.rows}×${s.cols})`).join(', '));
         });
     },
 
