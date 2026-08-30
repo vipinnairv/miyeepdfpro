@@ -11,7 +11,7 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.17.0';
+const APP_VERSION = '4.19.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -168,6 +168,40 @@ function download(data, filename, mime = 'application/pdf') {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 }
+
+/** Which open documents carry changes that have not been downloaded yet.
+ *
+ * Every tool here works on a copy in memory and hands the result back as a
+ * download, so closing the tab is the only way to lose work - and until now
+ * it did so in silence. A change is recorded where the undo snapshot is
+ * taken, which is exactly the set of operations that alter the document,
+ * and cleared when the file is saved or a different one is opened.
+ */
+const Dirty = {
+    slots: new Set(),
+
+    touch(docId) { this.slots.add(docId); this.show(docId); },
+    clear(docId) { this.slots.delete(docId); this.show(docId); },
+    has() { return this.slots.size > 0; },
+
+    /** Mark the tab's Save button, so "I have not saved this" is visible
+     *  rather than something you have to remember. */
+    show(docId) {
+        const dirty = this.slots.has(docId);
+        const btn = $(`${docId}-save`);
+        if (btn) btn.classList.toggle('btn--unsaved', dirty);
+        const note = $(`${docId}-unsaved`);
+        if (note) note.classList.toggle('hidden', !dirty);
+    },
+};
+
+// The browser shows its own wording here; all a page can do is ask for the
+// prompt at all. Nothing is asked when there is nothing to lose.
+window.addEventListener('beforeunload', (e) => {
+    if (!Dirty.has()) return;
+    e.preventDefault();
+    e.returnValue = '';
+});
 
 function formatSize(bytes) {
     if (bytes < 1024) return `${bytes} B`;
@@ -630,6 +664,7 @@ class DocView {
         const bytes = await fileToBytes(file);
         this.file = file;
         this.info = await engine.openDoc(this.docId, bytes, file.name);
+        Dirty.clear(this.docId);
         this.pages = this.info.pages;
         this.page = 0;
         $(`${this.key}-workspace`).classList.remove('hidden');
@@ -684,6 +719,7 @@ class DocView {
     async save(filename) {
         const bytes = await engine.call('save', this.docId);
         download(bytes, filename);
+        Dirty.clear(this.docId);
     }
 }
 
@@ -986,6 +1022,7 @@ const EditTool = {
             el.addEventListener('click', (e) => this.beginEdit(index, el, e));
             overlay.appendChild(el);
         });
+        this.drawSearchMarks();
     },
 
     /* ---- in-place text editing ---- */
@@ -1259,12 +1296,53 @@ const EditTool = {
     async search() {
         const term = $('edit-search').value.trim();
         if (!term) return;
-        const hits = await engine.callJSON('search_text', this.view.docId, term);
-        $('edit-search-results').innerHTML = hits.length
-            ? hits.map((h) => `<button class="search-hit" data-page="${h.page}">Page ${h.page + 1}</button>`).join('')
-            : '<span class="muted">No matches</span>';
-        $$('.search-hit', $('edit-search-results')).forEach((b) =>
-            b.addEventListener('click', () => this.view.go(Number(b.dataset.page))));
+        const safe = (t) => String(t).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+        await UI.run('Searching…', async () => {
+            this.hits = await engine.callJSON('search_text', this.view.docId, term);
+            const box = $('edit-search-results');
+            if (!this.hits.length) {
+                box.innerHTML = '<span class="muted">No matches</span>';
+                this.drawSpans();
+                return;
+            }
+            // Every hit shows the line it sits on, so you can tell which of
+            // seven "NEFT" on page one is the one you are after.
+            box.innerHTML =
+                `<p class="muted search-count">${this.hits.length} match(es)</p>` +
+                this.hits.map((h, i) => `
+                    <button class="search-hit" data-hit="${i}">
+                        <span class="search-hit__page">p${h.page + 1}</span>
+                        <span class="search-hit__text">${safe(h.before)}<mark>${safe(h.hit)}</mark>${safe(h.after)}</span>
+                    </button>`).join('');
+            $$('.search-hit', box).forEach((b) =>
+                b.addEventListener('click', () => this.goToHit(Number(b.dataset.hit))));
+            this.drawSpans();
+        });
+    },
+
+    /** Go to a hit and show where it is, rather than only which page. */
+    async goToHit(index) {
+        const hit = this.hits && this.hits[index];
+        if (!hit) return;
+        if (hit.page !== this.view.page) await this.view.go(hit.page);
+        this.current = index;
+        this.drawSpans();
+        const mark = $$('#edit-overlay .search-mark')[0];
+        if (mark) mark.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    },
+
+    /** Boxes over the hits on the page being viewed. */
+    drawSearchMarks() {
+        if (!this.hits || !this.hits.length) return;
+        const overlay = this.view.overlay;
+        this.hits.forEach((h, i) => {
+            if (h.page !== this.view.page) return;
+            const el = document.createElement('div');
+            el.className = 'search-mark' + (i === this.current ? ' search-mark--current' : '');
+            el.style.cssText = `left:${h.xFrac * 100}%;top:${h.yFrac * 100}%;` +
+                               `width:${h.wFrac * 100}%;height:${h.hFrac * 100}%`;
+            overlay.appendChild(el);
+        });
     },
 };
 
@@ -1276,8 +1354,60 @@ const PagesTool = {
     order: [],
     rotations: {},
     selected: new Set(),
+    past: [],
+    futures: [],
+
+    /* Undo here works differently from the other tabs, and cheaply. Nothing
+     * is written into the document until Save: deleting, reordering and
+     * rotating only change which pages this tab intends to keep and how. So
+     * a step back is a copy of that intention, not a copy of the file - no
+     * megabytes per step, and no engine call. */
+    STEPS: 40,
+
+    /** Record the arrangement before changing it. */
+    snap() {
+        this.past.push({ order: [...this.order], rotations: { ...this.rotations } });
+        if (this.past.length > this.STEPS) this.past.shift();
+        this.futures = [];
+        Dirty.touch('pages');
+        this.refreshSteps();
+    },
+
+    refreshSteps() {
+        $('pages-undo').disabled = !this.past.length;
+        $('pages-redo').disabled = !this.futures.length;
+    },
+
+    async step(direction) {
+        const from = direction === 'undo' ? this.past : this.futures;
+        const to = direction === 'undo' ? this.futures : this.past;
+        if (!from.length) {
+            return UI.toast(direction === 'undo' ? 'Nothing left to undo' : 'Nothing to redo', 'error');
+        }
+        to.push({ order: [...this.order], rotations: { ...this.rotations } });
+        const state = from.pop();
+        this.order = state.order;
+        this.rotations = state.rotations;
+        // A page brought back by an undo cannot stay selected as if it had
+        // never left, so the selection starts clean after a step.
+        this.selected.clear();
+        this.refreshSteps();
+        if (this.past.length) Dirty.touch('pages'); else Dirty.clear('pages');
+        await UI.run(direction === 'undo' ? 'Undoing…' : 'Redoing…', () => this.renderGrid());
+        UI.toast(direction === 'undo' ? 'Change undone' : 'Change redone', 'success');
+    },
 
     init() {
+        $('pages-undo').addEventListener('click', () => this.step('undo'));
+        $('pages-redo').addEventListener('click', () => this.step('redo'));
+        document.addEventListener('keydown', (e) => {
+            if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'z') return;
+            if (!$('pages-tab').classList.contains('active')) return;
+            const el = document.activeElement;
+            if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
+            e.preventDefault();
+            this.step(e.shiftKey ? 'redo' : 'undo');
+        });
         $('pages-file').addEventListener('change', (e) => this.open(Array.from(e.target.files)));
         $('pages-rotate-left').addEventListener('click', () => this.rotate(-90));
         $('pages-rotate-right').addEventListener('click', () => this.rotate(90));
@@ -1312,6 +1442,10 @@ const PagesTool = {
             this.order = Array.from({ length: info.pages }, (_, i) => i);
             this.rotations = {};
             this.selected.clear();
+            this.past = [];
+            this.futures = [];
+            this.refreshSteps();
+            Dirty.clear('pages');
             $('pages-workspace').classList.remove('hidden');
             await this.renderGrid();
             UI.toast(`${info.pages} pages loaded`, 'success');
@@ -1343,6 +1477,7 @@ const PagesTool = {
                 const from = this.order.indexOf(this._drag);
                 const to = this.order.indexOf(original);
                 if (from < 0 || to < 0 || from === to) return;
+                this.snap();
                 this.order.splice(to, 0, ...this.order.splice(from, 1));
                 this.renderGrid();
             });
@@ -1352,6 +1487,7 @@ const PagesTool = {
 
     rotate(delta) {
         if (!this.selected.size) return UI.toast('Select pages first', 'error');
+        this.snap();
         this.selected.forEach((p) => {
             this.rotations[p] = ((this.rotations[p] || 0) + delta + 360) % 360;
         });
@@ -1360,6 +1496,7 @@ const PagesTool = {
 
     remove() {
         if (!this.selected.size) return UI.toast('Select pages first', 'error');
+        this.snap();
         this.order = this.order.filter((p) => !this.selected.has(p));
         this.selected.clear();
         this.renderGrid();
@@ -1376,7 +1513,7 @@ const PagesTool = {
             const bytes = await engine.call('organize', 'pages',
                                             JSON.stringify(this.order), JSON.stringify(this.rotations));
             const mode = $('pages-split-mode').value;
-            if (!mode) { download(bytes, 'organized.pdf'); return; }
+            if (!mode) { download(bytes, 'organized.pdf'); Dirty.clear('pages'); return; }
 
             await engine.call('open_doc', 'pages_out', bytes);
             const parts = await engine.callJSON('split', 'pages_out', mode,
@@ -1385,6 +1522,7 @@ const PagesTool = {
             const zip = new JSZip();
             parts.forEach((p) => zip.file(p.name, b64ToBytes(p.b64)));
             download(await zip.generateAsync({ type: 'blob' }), 'split-pages.zip', 'application/zip');
+            Dirty.clear('pages');
             UI.toast(`Split into ${parts.length} files`, 'success');
         });
     },
@@ -1673,6 +1811,11 @@ const StampTool = {
         $('pn-apply').addEventListener('click', () => this.applyNumbers());
         $('hf-apply').addEventListener('click', () => this.applyHeaderFooter());
         $('bates-apply').addEventListener('click', () => this.applyBates());
+        // A Bates run is a legal artefact and hard to eyeball from four
+        // separate fields, so it is spelled out before it is committed.
+        ['bates-prefix', 'bates-suffix', 'bates-start', 'bates-digits'].forEach((id) => {
+            $(id).addEventListener('input', () => this.previewBates());
+        });
         $('stamp-save').addEventListener('click', () => this.view.save('stamped.pdf'));
 
         $$('.stamp-btn').forEach((btn) => btn.addEventListener('click', () => {
@@ -1707,6 +1850,7 @@ const StampTool = {
             $('stamp-apply').disabled = true;
             $('stamp-save').disabled = true;
             $('stamp-viewer').classList.add('hidden');
+            this.previewBates();
             return batchChosen('stamp', list);
         }
         $('stamp-apply').disabled = false;
@@ -1717,6 +1861,7 @@ const StampTool = {
         await UI.run('Opening document…', async () => {
             await this.view.load(this.file);
             await this.history.refresh();
+            this.previewBates();
         });
     },
 
@@ -1820,6 +1965,36 @@ const StampTool = {
         });
     },
 
+    /** The first and last number the current settings would produce. */
+    previewBates() {
+        const box = $('bates-preview');
+        if (!box) return;
+        const pages = this.batching
+            ? null
+            : (this.view && this.view.pages) || 0;
+        const start = Number($('bates-start').value || 1);
+        const digits = Math.max(1, Number($('bates-digits').value || 6));
+        const label = (n) => `${$('bates-prefix').value}${String(n).padStart(digits, '0')}${$('bates-suffix').value}`;
+
+        if (this.batching) {
+            box.innerHTML = `Starts at <code>${label(start)}</code> and runs on through every ` +
+                            `chosen file as one sequence.`;
+            return;
+        }
+        if (!pages) {
+            box.textContent = 'Choose a document to see the run this will produce.';
+            return;
+        }
+        const last = start + pages - 1;
+        // A number wider than the padding is not wrong, but it is worth
+        // saying: the run stops lining up at that point.
+        const overflow = String(last).length > digits
+            ? ' <span class="warn">The last numbers are wider than the padding, so the run stops lining up.</span>'
+            : '';
+        box.innerHTML = `<code>${label(start)}</code> to <code>${label(last)}</code> ` +
+                        `across <strong>${pages}</strong> page(s).${overflow}`;
+    },
+
     async applyBates() {
         if (this.batching) {
             // Bates numbering is a single unbroken sequence across a bundle,
@@ -1839,6 +2014,7 @@ const StampTool = {
                                         $('bates-pos').value);
             await this.view.render();
             await this.history.refresh();
+            this.previewBates();
             UI.toast(`Bates numbering applied to ${n} pages`, 'success');
         });
     },
@@ -2606,12 +2782,29 @@ const CompareTool = {
                 box.innerHTML = '<div class="summary-box">The two documents are textually identical.</div>';
                 return;
             }
-            box.innerHTML = `<div class="summary-box"><strong>${diff.totalChanges}</strong> change(s) found.</div>` +
+            // Text that only moved is said to have moved, rather than being
+            // shown as a deletion here and an unrelated rewrite there.
+            const moved = (c) => {
+                if (c.type === 'move') {
+                    return `<div class="diff-row diff-row--move">
+                                <div class="diff-move">→ Moved to page ${c.movedTo + 1}, unchanged</div>
+                                <div class="diff-same">${c.old}</div>
+                            </div>`;
+                }
+                return `<div class="diff-row diff-row--move">
+                            <div class="diff-move">← Moved here from page ${c.movedFrom + 1}, unchanged</div>
+                            <div class="diff-same">${c.new}</div>
+                        </div>`;
+            };
+            const counts = diff.moves
+                ? `<strong>${diff.edits}</strong> edit(s) and <strong>${diff.moves}</strong> moved passage(s).`
+                : `<strong>${diff.totalChanges}</strong> change(s) found.`;
+            box.innerHTML = `<div class="summary-box">${counts}</div>` +
                 diff.pages.filter((p) => p.changes.length || p.onlyIn).map((p) => `
                     <div class="diff-page">
                         <h4>Page ${p.page + 1} <span class="muted">(${p.similarity}% similar)</span></h4>
                         ${p.onlyIn ? `<p class="muted">Only present in the ${p.onlyIn === 'a' ? 'original' : 'revised'} document.</p>` : ''}
-                        ${p.changes.map((c) => `
+                        ${p.changes.map((c) => (c.type === 'move' || c.type === 'moved-here') ? moved(c) : `
                             <div class="diff-row">
                                 ${c.old ? `<div class="diff-old">− ${c.old}</div>` : ''}
                                 ${c.new ? `<div class="diff-new">+ ${c.new}</div>` : ''}
@@ -2655,6 +2848,7 @@ function makeHistory(key, view, ids = {}) {
     const history = {
         /** Record the state before a change, so it can be stepped back to. */
         async mark() {
+            Dirty.touch(view.docId);
             try {
                 await engine.call('snapshot', view.docId);
                 await history.refresh();
@@ -2686,7 +2880,8 @@ function makeHistory(key, view, ids = {}) {
                                                          : 'Nothing to redo', 'error');
                 }
                 await view.render();
-                await history.refresh();
+                const state = await history.refresh();
+                if (state.undo) Dirty.touch(view.docId); else Dirty.clear(view.docId);
                 UI.toast(direction === 'undo' ? 'Change undone' : 'Change redone', 'success');
             });
         },
@@ -3285,4 +3480,4 @@ if ('serviceWorker' in navigator) {
     });
 }
 
-window.PDFSuite = { engine, UI, Tools, TOOL_CARDS };
+window.PDFSuite = { engine, UI, Tools, TOOL_CARDS, Dirty };

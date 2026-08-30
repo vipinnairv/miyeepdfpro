@@ -558,17 +558,37 @@ def insert_text(doc_id, pno, x_frac, y_frac, text, size=12, color="#000000",
     return json.dumps({"ok": True, "size": round(size, 1)})
 
 
-def search_text(doc_id, needle):
-    """Find a phrase across the document; returns fractional hit rectangles."""
+def search_text(doc_id, needle, context=48):
+    """Find a phrase across the document.
+
+    Each hit carries the line it sits on as well as its rectangle. A list of
+    twenty buttons all reading "Page 4" tells you nothing about which one you
+    want; the surrounding words do.
+    """
     doc = _doc(doc_id)
+    term = str(needle)
     hits = []
     for pno, page in enumerate(doc):
         pw, ph = page.rect.width, page.rect.height
-        for r in page.search_for(needle):
+        for r in page.search_for(term):
+            # The whole line the hit sits on, taken from the page rather than
+            # reconstructed, so it reads as it does on paper.
+            band = pymupdf.Rect(0, r.y0 - 1, pw, r.y1 + 1)
+            line = " ".join(page.get_textbox(band).split())
+            at = line.lower().find(term.lower())
+            if at < 0:
+                before, hit, after = "", term, ""
+            else:
+                start = max(at - int(context), 0)
+                before = ("…" if start else "") + line[start:at]
+                hit = line[at:at + len(term)]
+                end = at + len(term) + int(context)
+                after = line[at + len(term):end] + ("…" if end < len(line) else "")
             hits.append({
                 "page": pno,
                 "xFrac": r.x0 / pw, "yFrac": r.y0 / ph,
                 "wFrac": r.width / pw, "hFrac": r.height / ph,
+                "before": before, "hit": hit, "after": after,
             })
     return json.dumps(hits)
 
@@ -1743,6 +1763,55 @@ def _column_gutters(lines, tolerance):
     return edges if len(edges) >= 3 else None
 
 
+def _header_groups(line):
+    """The header line's own headings, as (start, end) pairs.
+
+    A heading is one or more words with ordinary spacing between them
+    ("Value Date"); the wider gap to the next heading is what separates the
+    columns.
+    """
+    words = line["words"]
+    if len(words) < 2:
+        return []
+    # The spacing is taken from the type size, not from the gaps on the line:
+    # on a header row every gap is a column gap, so the median of them is a
+    # column width and splits nothing.
+    height = sorted(w[3] - w[1] for w in words)[len(words) // 2]
+    limit = max(height * 0.9, 6.0)
+    groups, start, end = [], words[0][0], words[0][2]
+    for prev, w in zip(words, words[1:]):
+        if w[0] - prev[2] > limit:
+            groups.append((start, end))
+            start = w[0]
+        end = w[2]
+    groups.append((start, end))
+    return groups
+
+
+def _split_by_header(lines, edges):
+    """Split any column that the header shows is really two.
+
+    Whitespace lanes fail where something crosses them - a section heading
+    spanning the page, or a speck OCR left behind - and two columns then
+    arrive merged into one. The header row does not lie about how many
+    columns there are, so where it puts two headings inside a single column,
+    that column is divided between them.
+    """
+    header = max(lines, key=lambda ln: len(_header_groups(ln)))
+    groups = _header_groups(header)
+    if len(groups) < 3:
+        return edges
+
+    extra = []
+    for lo, hi in zip(edges, edges[1:]):
+        inside = [g for g in groups if lo <= g[0] < hi]
+        for left, right in zip(inside, inside[1:]):
+            extra.append((left[1] + right[0]) / 2.0)
+    if not extra:
+        return edges
+    return sorted(set(edges) | set(extra))
+
+
 def _rows_in_block(lines, edges):
     """Lay a block's words out into the columns the gutters mark."""
     ncols = len(edges) - 1
@@ -1795,6 +1864,7 @@ def _borderless_tables(page):
         edges = _column_gutters(block, tolerance=max(1, len(block) // 6))
         if not edges or len(edges) - 1 < 3:
             continue
+        edges = _split_by_header(block, edges)
         rows = _rows_in_block(block, edges)
         # Only a block whose lines really do span its columns is a table; a
         # paragraph that happens to have a ragged edge is not.
@@ -2155,6 +2225,55 @@ def flatten_annotations(doc_id):
 # compare two documents
 # --------------------------------------------------------------------------
 
+_MOVE_MIN_WORDS = 5
+
+
+def _pair_moves(pages):
+    """Recognise text that moved rather than being rewritten.
+
+    A word diff reports a paragraph shifted to the next page as a deletion
+    here and an unrelated insertion there, which reads as two rewrites and
+    inflates the count. Where the wording is identical, it moved - and that
+    is a different fact about the document, worth saying rather than hiding
+    among the edits.
+
+    Only runs of a few words are paired: a single word appearing in two
+    places is a coincidence, not a move.
+    """
+    removed, added = [], []
+    for page in pages:
+        for change in page["changes"]:
+            key = " ".join(change["old"].lower().split())
+            if change["type"] == "delete" and len(key.split()) >= _MOVE_MIN_WORDS:
+                removed.append((key, page, change))
+            key = " ".join(change["new"].lower().split())
+            if change["type"] == "insert" and len(key.split()) >= _MOVE_MIN_WORDS:
+                added.append((key, page, change))
+
+    taken = set()
+    moves = 0
+    for key, from_page, gone in removed:
+        for i, (other, to_page, arrived) in enumerate(added):
+            if i in taken or other != key:
+                continue
+            taken.add(i)
+            moves += 1
+            gone["type"] = "move"
+            gone["movedTo"] = to_page["page"]
+            gone["new"] = arrived["new"]
+            arrived["type"] = "moved-here"
+            arrived["movedFrom"] = from_page["page"]
+            arrived["old"] = gone["old"]
+            break
+
+    # The arrival is the same fact as the departure, so it is not counted
+    # twice; it stays in the list so the page it landed on shows it.
+    for page in pages:
+        page["changes"] = [c for c in page["changes"] if c["type"] != "moved-here"] + \
+                          [c for c in page["changes"] if c["type"] == "moved-here"]
+    return moves
+
+
 def compare(doc_a, doc_b):
     """Word-level diff between two versions, page by page."""
     a, b = _doc(doc_a), _doc(doc_b)
@@ -2181,8 +2300,11 @@ def compare(doc_a, doc_b):
             "onlyIn": ("a" if pno >= b.page_count else "b" if pno >= a.page_count else None),
         })
 
-    total = sum(len(p["changes"]) for p in pages)
-    return json.dumps({"pages": pages, "totalChanges": total})
+    moves = _pair_moves(pages)
+    edits = sum(1 for p in pages for c in p["changes"]
+                if c["type"] not in ("move", "moved-here"))
+    return json.dumps({"pages": pages, "totalChanges": edits + moves,
+                       "edits": edits, "moves": moves})
 
 
 def highlight_differences(doc_id, other_id):

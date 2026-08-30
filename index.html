@@ -13,14 +13,14 @@
 
     <!-- SVG first for modern browsers; .ico covers older ones and the
          automatic /favicon.ico request. -->
-    <link rel="icon" href="favicon.svg?v=4.17.0" type="image/svg+xml">
-    <link rel="icon" href="favicon.ico?v=4.17.0" sizes="16x16 32x32 48x48">
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.17.0">
-    <link rel="manifest" href="site.webmanifest?v=4.17.0">
+    <link rel="icon" href="favicon.svg?v=4.19.0" type="image/svg+xml">
+    <link rel="icon" href="favicon.ico?v=4.19.0" sizes="16x16 32x32 48x48">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.19.0">
+    <link rel="manifest" href="site.webmanifest?v=4.19.0">
 
     <!-- ?v= busts the browser cache on redeploy: without it a stale app.js/style.css
          pair silently breaks the page. Bump APP_VERSION in app.js to match. -->
-    <link rel="stylesheet" href="style.css?v=4.17.0">
+    <link rel="stylesheet" href="style.css?v=4.19.0">
     <script src="https://cdn.jsdelivr.net/pyodide/v314.0.5/full/pyodide.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
@@ -29,7 +29,7 @@
     <header class="header">
         <div class="header__content">
             <h1 class="header__title">
-                <img class="header__logo" src="logo.svg?v=4.17.0" alt="" width="34" height="34">
+                <img class="header__logo" src="logo.svg?v=4.19.0" alt="" width="34" height="34">
                 MiyeePDF <span class="header__byline">Built by Vipin Nair</span>
             </h1>
             <div class="header__right">
@@ -239,6 +239,7 @@
                         <button class="btn btn--sm btn--full-width" id="outline-apply">Apply outline</button>
                     </div>
                     <div class="side-footer">
+                        <p class="unsaved-note hidden" id="edit-unsaved">Unsaved changes - they are lost if you close this tab.</p>
                         <button class="btn btn--primary btn--full-width" id="edit-save">💾 Save PDF</button>
                     </div>
                 </aside>
@@ -259,6 +260,12 @@
 
             <div class="workspace workspace--full hidden" id="pages-workspace">
                 <div class="viewer-toolbar">
+                    <div class="tool-group">
+                        <button class="btn btn--sm" id="pages-undo" disabled
+                                aria-label="Undo" title="Undo (Ctrl+Z)">↶ Undo</button>
+                        <button class="btn btn--sm" id="pages-redo" disabled
+                                aria-label="Redo" title="Redo (Ctrl+Shift+Z)">↷ Redo</button>
+                    </div>
                     <div class="tool-group">
                         <button class="btn btn--sm" id="pages-rotate-left">↺ Rotate Left</button>
                         <button class="btn btn--sm" id="pages-rotate-right">↻ Rotate Right</button>
@@ -284,6 +291,7 @@
                 <p class="hint">Drag thumbnails to reorder. Click to select for rotate/delete.</p>
                 <div class="page-grid" id="pages-grid"></div>
                 <div class="action-buttons">
+                    <p class="unsaved-note hidden" id="pages-unsaved">Unsaved changes - they are lost if you close this tab.</p>
                     <button class="btn btn--primary" id="pages-save">💾 Save PDF</button>
                 </div>
             </div>
@@ -294,6 +302,9 @@
             <div class="tool-header">
                 <h2>Fill &amp; Sign</h2>
                 <p>Sign, initial, date and check - plus real AcroForm field filling</p>
+                <p class="hint hint--inline">This places a drawn or typed signature onto the page. It is not a
+                   digital signature: there is no certificate, so nothing here proves who signed or detects a
+                   later change. Where a DSC or eIDAS-qualified signature is required, sign with that instead.</p>
             </div>
             <div class="file-drop-zone" data-drop="sign" role="button" tabindex="0" aria-label="Choose a PDF, or drop one here">
                 <p>Drop a PDF here or click to select</p>
@@ -349,6 +360,7 @@
                     </div>
                     <div class="side-footer">
                         <label class="checkbox-row"><input type="checkbox" id="sign-flatten" checked> Flatten fields on save</label>
+                        <p class="unsaved-note hidden" id="sign-unsaved">Unsaved changes - they are lost if you close this tab.</p>
                         <button class="btn btn--primary btn--full-width" id="sign-save">💾 Save Signed PDF</button>
                     </div>
                 </aside>
@@ -504,10 +516,12 @@
                                     <option value="bottom-left">Bottom left</option>
                                     <option value="top-right">Top right</option>
                                 </select></div>
+                            <p class="hint hint--inline" id="bates-preview">Choose a document to see the run this will produce.</p>
                             <button class="btn btn--primary btn--full-width" id="bates-apply">Apply Bates Numbering</button>
                         </section>
                     </div>
                     <div class="side-footer">
+                        <p class="unsaved-note hidden" id="stamp-unsaved">Unsaved changes - they are lost if you close this tab.</p>
                         <button class="btn btn--primary btn--full-width" id="stamp-save">💾 Save PDF</button>
                     </div>
                 </aside>
@@ -1081,6 +1095,6 @@
         </div>
     </footer>
 
-    <script src="app.js?v=4.17.0"></script>
+    <script src="app.js?v=4.19.0"></script>
 </body>
 </html>
