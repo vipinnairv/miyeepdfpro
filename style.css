@@ -1571,8 +1571,16 @@ body {
   color: var(--color-text-secondary);
 }
 
+/* auto-fill lays out as many column tracks as the width allows, filled or
+   not, so on a wide screen a group of four cards sat in a seven-track grid
+   with three empty tracks trailing off to the right. Capping and centring
+   the dashboard keeps the cards a readable width and the empty space evenly
+   split, instead of banked up on one side. */
 .dashboard {
   padding: var(--space-24);
+  width: 100%;
+  max-width: 1240px;
+  margin: 0 auto;
   overflow-y: auto;
 }
 
