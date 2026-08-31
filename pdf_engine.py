@@ -698,6 +698,8 @@ def compress(doc_id, level="medium"):
                 base = doc.extract_image(xref)
             except Exception:
                 continue
+            if doc.xref_get_key(xref, "SMask")[0] != "null":
+                continue
             pix = pymupdf.Pixmap(doc, xref)
             if pix.n - pix.alpha >= 4:  # CMYK -> RGB so JPEG is valid
                 pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
@@ -720,12 +722,20 @@ def compress(doc_id, level="medium"):
                 continue
             if len(new_bytes) < len(base.get("image", b"")):
                 try:
-                    doc.update_stream(xref, new_bytes, new=True)
+                    # compress=False is the whole point: update_stream deflates
+                    # by default, which would leave a Flate-wrapped JPEG under a
+                    # dictionary claiming /DCTDecode. Lenient readers cope;
+                    # strict ones drop the image, so a scanned page opens blank.
+                    doc.update_stream(xref, new_bytes, new=True, compress=False)
                     doc.xref_set_key(xref, "Filter", "/DCTDecode")
-                    doc.xref_set_key(xref, "ColorSpace", "/DeviceRGB")
+                    doc.xref_set_key(xref, "ColorSpace",
+                                     "/DeviceGray" if pix.n == 1 else "/DeviceRGB")
                     doc.xref_set_key(xref, "BitsPerComponent", "8")
                     doc.xref_set_key(xref, "Width", str(pix.width))
                     doc.xref_set_key(xref, "Height", str(pix.height))
+                    # Whatever described the old stream cannot describe this one.
+                    doc.xref_set_key(xref, "DecodeParms", "null")
+                    doc.xref_set_key(xref, "Decode", "null")
                 except Exception:
                     pass
 
