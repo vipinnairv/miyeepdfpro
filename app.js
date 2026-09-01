@@ -11,7 +11,7 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.22.0';
+const APP_VERSION = '4.23.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -2872,7 +2872,7 @@ const RedactTool = {
 
 const ExportTool = {
     init() {
-        $('export-file').addEventListener('change', (e) => this.open(e.target.files[0]));
+        $('export-file').addEventListener('change', (e) => this.open(Array.from(e.target.files)));
         $('export-doc').addEventListener('click', () => this.doc());
         $('export-html').addEventListener('click', () => this.html());
         $('export-text').addEventListener('click', () => this.text());
@@ -2940,8 +2940,36 @@ const ExportTool = {
         }
     },
 
-    async open(file) {
-        if (!file) return;
+    async open(files) {
+        const list = Array.isArray(files) ? files : [files].filter(Boolean);
+        if (!list.length) return;
+        this.files = list;
+
+        if (list.length > 1) {
+            // Several statements are one body of work. Only the table export
+            // can honestly combine them - a Word file or a page render per
+            // document is a pile of downloads, not one result - so the rest
+            // are put away rather than left to do something surprising.
+            this.name = `${list.length}-files`;
+            $('export-workspace').classList.remove('hidden');
+            $('export-scan-notice').classList.add('hidden');
+            $('export-summary').innerHTML =
+                `<strong>${list.length} files</strong> - ${formatSize(list.reduce((n, f) => n + f.size, 0))} in total.<br>` +
+                '<span class="muted">Tables from all of them go into one workbook, a sheet per file. ' +
+                'The other exports work on one document at a time.</span>';
+            $$('.export-card').forEach((c) => {
+                c.disabled = c.id !== 'export-tables-xlsx';
+                c.classList.toggle('export-card--off', c.disabled);
+            });
+            this.result('');
+            return;
+        }
+
+        $$('.export-card').forEach((c) => {
+            c.disabled = false;
+            c.classList.remove('export-card--off');
+        });
+        const file = list[0];
         this.name = file.name.replace(/\.pdf$/i, '');
         await UI.run('Opening document…', async () => {
             const info = await engine.openDoc('export', await fileToBytes(file), file.name);
@@ -2949,6 +2977,36 @@ const ExportTool = {
             $('export-workspace').classList.remove('hidden');
             $('export-summary').innerHTML = `<strong>${file.name}</strong> - ${info.pages} page(s)`;
             await this.checkScanned(info.pages);
+        });
+    },
+
+    /** One workbook from several documents, a sheet per file. */
+    async tablesXlsxBatch() {
+        const one = $('export-tables-one-sheet').checked;
+        await UI.run('Reading tables…', async () => {
+            await engine.call('start_table_batch', 'export');
+            const skipped = [];
+            for (const file of this.files) {
+                this.result(`Reading <strong>${file.name}</strong>…`);
+                try {
+                    await engine.openDoc('export', await fileToBytes(file), file.name);
+                    const label = file.name.replace(/\.pdf$/i, '');
+                    await engine.callJSON('add_to_table_batch', 'export', 'export', label, one);
+                } catch (err) {
+                    const why = String(err.message || err).includes('CANCELLED')
+                        ? 'skipped - no password given' : UI.explain(err);
+                    skipped.push(`${file.name} - ${why}`);
+                }
+            }
+            const res = await engine.callJSON('finish_table_batch', 'export');
+            if (!res.ok) return this.result(res.reason);
+            const mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+            download(b64ToBytes(res.b64), `tables-${this.files.length}-files.xlsx`, mime);
+            const note = skipped.length
+                ? `<br><span class="warn">${skipped.length} could not be read:</span><br>${skipped.join('<br>')}`
+                : '';
+            this.result(`One workbook with <strong>${res.sheets.length}</strong> sheet(s): ` +
+                        res.sheets.map((s) => `${s.name} (${s.rows}×${s.cols})`).join(', ') + note);
         });
     },
 
@@ -2985,6 +3043,7 @@ const ExportTool = {
     },
 
     async tablesXlsx() {
+        if (this.files && this.files.length > 1) return this.tablesXlsxBatch();
         await UI.run('Detecting tables…', async () => {
             const one = $('export-tables-one-sheet').checked;
             const result = await engine.callJSON('export_tables_xlsx', 'export', one);

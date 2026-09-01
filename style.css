@@ -1150,6 +1150,9 @@ body {
 .restore-banner__text { display: flex; flex-direction: column; gap: 2px; font-size: var(--font-size-sm); }
 .restore-banner__actions { display: flex; gap: var(--space-8); }
 
+.export-card--off { opacity: 0.45; cursor: not-allowed; }
+.export-card--off:hover { border-color: var(--color-border); transform: none; box-shadow: none; }
+
 .draw-ghost {
   position: absolute;
   border: 2px dashed var(--color-primary);
