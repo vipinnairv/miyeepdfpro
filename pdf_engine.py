@@ -1917,14 +1917,34 @@ def _column_gutters(lines, tolerance):
         return None
 
     width = int(right - left) + 2
-    ink = [0] * width
+    # Counted as intervals rather than bin by bin. Walking every point a word
+    # covers is a million steps for a thirty-six page statement, and this runs
+    # in WebAssembly where a Python-level loop is the expensive thing: the
+    # same page took 54 seconds that way and under a second this way. Each
+    # line contributes its own merged spans, so a lane is judged by how many
+    # lines cross it, not how many words.
+    delta = [0] * (width + 1)
     for line in lines:
-        touched = set()
-        for w in line["words"]:
-            for b in range(max(int(w[0] - left), 0), min(int(w[2] - left) + 1, width)):
-                touched.add(b)
-        for b in touched:
-            ink[b] += 1
+        spans = sorted((max(int(w[0] - left), 0), min(int(w[2] - left) + 1, width))
+                       for w in line["words"])
+        merged_lo, merged_hi = None, None
+        for lo, hi in spans:
+            if merged_hi is not None and lo <= merged_hi:
+                merged_hi = max(merged_hi, hi)
+                continue
+            if merged_hi is not None:
+                delta[merged_lo] += 1
+                delta[merged_hi] -= 1
+            merged_lo, merged_hi = lo, hi
+        if merged_hi is not None:
+            delta[merged_lo] += 1
+            delta[merged_hi] -= 1
+
+    ink = [0] * width
+    running = 0
+    for b in range(width):
+        running += delta[b]
+        ink[b] = running
 
     spans, run_start = [], None
     for b in range(width):
@@ -2059,7 +2079,7 @@ def _borderless_tables(page):
     return tables
 
 
-def _find_page_tables(page):
+def _find_page_tables(page, text_fallback=True):
     """Detect tables on a page: ruled borders first, then column alignment.
 
     Most PDFs export from Word/Excel/accounting software draw no ruling lines
@@ -2072,8 +2092,12 @@ def _find_page_tables(page):
         found = list(page.find_tables().tables)
     except Exception:
         found = []
-    if found:
+    if found or not text_fallback:
         return found
+    # The text strategy is expensive - it compares every character against
+    # every candidate cell, which on a thirty-six page statement is twenty
+    # million comparisons and three quarters of the whole export. It is worth
+    # that only when nothing else has found anything, so the caller decides.
     try:
         found = list(page.find_tables(
             vertical_strategy="text", horizontal_strategy="text",
@@ -2250,12 +2274,20 @@ def _page_tables_as_rows(page):
     statement printed from a web page, and for any scan, where no ruling
     survives to be read.
     """
+    # Ruling first, because it is cheap and authoritative where it exists;
+    # then the layout reader, which is also cheap. The costly text strategy is
+    # only reached if both come back with nothing.
     ruled = []
-    for table in _find_page_tables(page):
+    for table in _find_page_tables(page, text_fallback=False):
         rows = _table_rows(page, table)
         if rows:
             ruled.append(rows)
     loose = _borderless_tables(page)
+    if not ruled and not loose:
+        for table in _find_page_tables(page):
+            rows = _table_rows(page, table)
+            if rows:
+                ruled.append(rows)
 
     # Neither reader is right often enough to be trusted on a threshold. A
     # detector that has misread a page gives itself away by the shape of what
@@ -2442,6 +2474,79 @@ def _combine_tables(sheets):
     return {"name": "All tables", "rows": out}
 
 
+# doc_id -> sheets gathered so far, for a workbook built from several files.
+_XLSX_BATCH = {}
+
+
+def start_table_batch(key):
+    """Begin collecting tables from more than one document."""
+    _XLSX_BATCH[key] = []
+    return True
+
+
+def add_to_table_batch(key, doc_id, label, combine=False):
+    """Fold one document's tables into the workbook being collected.
+
+    Four statements from the same bank are one body of work, and wanting them
+    in one file is the ordinary case rather than an unusual one. Each keeps
+    its own sheet, named after the file, so a figure can always be traced
+    back to the document it was printed in.
+    """
+    doc = _doc(doc_id)
+    sheets = _sheets_for(doc, combine)
+    batch = _XLSX_BATCH.setdefault(key, [])
+    for i, sheet in enumerate(sheets):
+        # Excel refuses a sheet name over 31 characters or carrying : \ / ? * [ ]
+        name = _safe_sheet_name(label if len(sheets) == 1 else f"{label} {i + 1}",
+                                [s["name"] for s in batch])
+        batch.append({"name": name, "rows": sheet["rows"]})
+    return json.dumps({"sheets": len(batch), "added": len(sheets)})
+
+
+def finish_table_batch(key, creator="MiyeePDF"):
+    """Build the workbook from everything collected."""
+    sheets = _XLSX_BATCH.pop(key, [])
+    if not sheets:
+        return json.dumps({"ok": False, "reason": "No tables were found in any of those files."})
+    data = _build_xlsx(sheets, creator=creator)
+    return json.dumps({
+        "ok": True,
+        "b64": base64.b64encode(data).decode(),
+        "sheets": [{"name": s["name"], "rows": len(s["rows"]),
+                    "cols": len(s["rows"][0]) if s["rows"] else 0} for s in sheets],
+    })
+
+
+def _safe_sheet_name(raw, taken):
+    """A worksheet name Excel will actually accept, and not a duplicate."""
+    name = "".join(" " if c in ":\\/?*[]" else c for c in str(raw)).strip() or "Sheet"
+    name = name[:31]
+    if name not in taken:
+        return name
+    for n in range(2, 200):
+        suffix = f" ({n})"
+        candidate = name[:31 - len(suffix)] + suffix
+        if candidate not in taken:
+            return candidate
+    return name[:28] + "..."
+
+
+def _sheets_for(doc, combine):
+    """The sheets one document contributes, honouring the one-sheet choice."""
+    sheets = []
+    for pno, page in enumerate(doc):
+        for tno, rows in enumerate(_page_tables_as_rows(page), 1):
+            if not rows:
+                continue
+            clean = [["" if c is None else str(c).replace("\n", " ") for c in row] for row in rows]
+            sheets.append({"name": f"Page {pno + 1} Table {tno}", "rows": clean})
+    if sheets and combine:
+        rows = _document_grid(doc)
+        sheets = [{"name": "All tables", "rows": _combined_header(rows)}] if rows \
+            else [_combine_tables(sheets)]
+    return sheets
+
+
 def export_tables_xlsx(doc_id, combine=False):
     """Detect tables and return them as one real .xlsx workbook -- formatted
     (bold header, borders, banded rows, auto-fit columns, frozen header)
@@ -2452,20 +2557,10 @@ def export_tables_xlsx(doc_id, combine=False):
     actually is.
     """
     doc = _doc(doc_id)
-    sheets = []
-    for pno, page in enumerate(doc):
-        for tno, rows in enumerate(_page_tables_as_rows(page), 1):
-            if not rows:
-                continue
-            clean = [["" if c is None else str(c).replace("\n", " ") for c in row] for row in rows]
-            sheets.append({"name": f"Page {pno + 1} Table {tno}", "rows": clean})
-    if sheets and combine:
-        # One grid for the whole document beats stacking grids that disagree
-        # about how many columns there are; the per-page fold is kept for the
-        # documents where that finds nothing.
-        rows = _document_grid(doc)
-        sheets = [{"name": "All tables", "rows": _combined_header(rows)}] if rows \
-            else [_combine_tables(sheets)]
+    # One grid for the whole document beats stacking grids that disagree about
+    # how many columns there are; the per-page fold is kept for the documents
+    # where that finds nothing.
+    sheets = _sheets_for(doc, combine)
     if not sheets:
         return json.dumps({"ok": False, "reason": _no_tables_reason(doc)})
     data = _build_xlsx(sheets, creator="MiyeePDF")
