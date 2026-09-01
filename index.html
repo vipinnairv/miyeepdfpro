@@ -13,14 +13,14 @@
 
     <!-- SVG first for modern browsers; .ico covers older ones and the
          automatic /favicon.ico request. -->
-    <link rel="icon" href="favicon.svg?v=4.21.2" type="image/svg+xml">
-    <link rel="icon" href="favicon.ico?v=4.21.2" sizes="16x16 32x32 48x48">
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.21.2">
-    <link rel="manifest" href="site.webmanifest?v=4.21.2">
+    <link rel="icon" href="favicon.svg?v=4.22.0" type="image/svg+xml">
+    <link rel="icon" href="favicon.ico?v=4.22.0" sizes="16x16 32x32 48x48">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.22.0">
+    <link rel="manifest" href="site.webmanifest?v=4.22.0">
 
     <!-- ?v= busts the browser cache on redeploy: without it a stale app.js/style.css
          pair silently breaks the page. Bump APP_VERSION in app.js to match. -->
-    <link rel="stylesheet" href="style.css?v=4.21.2">
+    <link rel="stylesheet" href="style.css?v=4.22.0">
     <script src="https://cdn.jsdelivr.net/pyodide/v314.0.5/full/pyodide.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
@@ -32,7 +32,7 @@
     <header class="header">
         <div class="header__content">
             <h1 class="header__title">
-                <img class="header__logo" src="logo.svg?v=4.21.2" alt="" width="34" height="34">
+                <img class="header__logo" src="logo.svg?v=4.22.0" alt="" width="34" height="34">
                 MiyeePDF <span class="header__byline">Built by Vipin Nair</span>
             </h1>
             <div class="header__right">
@@ -761,7 +761,8 @@
                             <input type="text" id="redact-term" class="form-control" placeholder="e.g. an account number">
                             <button class="btn btn--sm btn--full-width" id="redact-search">Mark &amp; redact all matches</button>
                         </div>
-                        <label class="checkbox-row"><input type="checkbox" id="redact-images"> Also remove images touched by a redaction</label>
+                        <label class="checkbox-row"><input type="checkbox" id="redact-images"> Delete a whole image if a redaction touches it</label>
+                        <p class="hint hint--inline">Off, the covered part of an image is cut out of the image data and the rest of the picture is kept - which is what a scanned page needs. On, any image the box touches is removed entirely.</p>
                         <p class="hint hint--inline">The colour only changes the box left behind - the content underneath is always destroyed.</p>
                         <div id="redact-count" class="muted"></div>
                     </div>
@@ -1156,6 +1157,6 @@
         </div>
     </footer>
 
-    <script src="app.js?v=4.21.2"></script>
+    <script src="app.js?v=4.22.0"></script>
 </body>
 </html>

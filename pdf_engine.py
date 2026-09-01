@@ -599,6 +599,16 @@ def search_text(doc_id, needle, context=48):
 # redaction
 # --------------------------------------------------------------------------
 
+# Redaction over an image has to cut the pixels out of the image data, not
+# paint a rectangle on top of it. IMAGE_NONE leaves the picture whole and the
+# covered area is still there for anyone who extracts it - which is exactly
+# the "black box you can recover" this tool exists not to be, and on a scan
+# every word on the page is inside an image. PIXELS blanks only the covered
+# part, so the rest of the scan survives; REMOVE throws the whole image away
+# and is offered separately for when that is what you want.
+_REDACT_IMAGES = pymupdf.PDF_REDACT_IMAGE_PIXELS
+
+
 def redact(doc_id, marks_json, remove_images=False, fill="#000000"):
     """Permanently remove content under each mark.
 
@@ -618,7 +628,7 @@ def redact(doc_id, marks_json, remove_images=False, fill="#000000"):
         page.add_redact_annot(rect, fill=colour)
         touched.add(int(mark["page"]))
 
-    mode = pymupdf.PDF_REDACT_IMAGE_REMOVE if remove_images else pymupdf.PDF_REDACT_IMAGE_NONE
+    mode = pymupdf.PDF_REDACT_IMAGE_REMOVE if remove_images else _REDACT_IMAGES
     for pno in touched:
         doc[pno].apply_redactions(images=mode)
     return len(touched)
@@ -635,7 +645,7 @@ def redact_search(doc_id, needle, pages_spec="", fill="#000000"):
         for rect in found:
             page.add_redact_annot(rect, fill=colour)
         if found:
-            page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE)
+            page.apply_redactions(images=_REDACT_IMAGES)
             count += len(found)
     return count
 
@@ -2908,7 +2918,7 @@ def redact_hits(doc_id, hits_json, fill="#000000", mode="box"):
         touched.add(int(hit["page"]))
 
     for pno in touched:
-        doc[pno].apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE)
+        doc[pno].apply_redactions(images=_REDACT_IMAGES)
     return len(hits)
 
 
