@@ -98,7 +98,7 @@ MiyeePDF edits the actual document instead:
 
 ## First load
 
-The engine downloads once (about 28 MB) in the background while the page is usable. A service worker then keeps it in Cache Storage rather than the ordinary HTTP cache, which is evicted far more readily, so later visits start from disk and the app keeps working with no connection at all.
+The engine downloads once (about 28 MB, of which 17.5 MB is the PDF engine itself) in the background while the page is usable. That step's length cannot be measured from the page - Pyodide owns the fetch and does not expose it - so rather than a bar creeping to 97% on a timer, which made a stalled download look almost finished, it says how long it has been going and leaves the bar indeterminate. Past four minutes it says so, and offers to try again. A service worker then keeps it in Cache Storage rather than the ordinary HTTP cache, which is evicted far more readily, so later visits start from disk and the app keeps working with no connection at all.
 
 ## Development
 

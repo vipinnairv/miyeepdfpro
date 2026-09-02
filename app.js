@@ -11,7 +11,7 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.23.0';
+const APP_VERSION = '4.24.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -63,19 +63,59 @@ class PyEngine {
         return () => clearInterval(timer);
     }
 
+    /** Say honestly how the one big download is going.
+     *
+     * Three things were tried for a real byte count and none of them work
+     * here, so the reasoning is worth keeping rather than rediscovering:
+     *
+     *  - Fetching the wheel separately and handing it over transfers it
+     *    twice. Measured: 35.1 MB moved for a 17.5 MB file, because nothing
+     *    dedupes the second request.
+     *  - loadPackage will not take a blob URL; it derives the package name
+     *    from the filename and a blob URL has none.
+     *  - Wrapping window.fetch sees nothing: Pyodide does not fetch the
+     *    wheel through it, as a probe of every URL that passes through
+     *    window.fetch confirmed.
+     *
+     * So the size is not knowable from here. What is knowable is how long it
+     * has been going, and that is what gets shown - with the bar left
+     * indeterminate rather than creeping to 97% and sitting there, which is
+     * what made a stalled download look like an almost-finished one.
+     */
+    _watchDownload(onStep) {
+        const started = Date.now();
+        const tick = setInterval(() => {
+            const secs = Math.round((Date.now() - started) / 1000);
+            if (secs < 20) return;
+            const mins = Math.floor(secs / 60);
+            const elapsed = mins ? `${mins} min ${secs % 60}s` : `${secs}s`;
+            if (secs < 90) {
+                onStep(`Downloading PDF tools (17.5 MB, one time) - ${elapsed} so far`, -1);
+            } else if (secs < 240) {
+                onStep(`Still downloading (17.5 MB, one time) - ${elapsed} so far. ` +
+                       'A slow connection can take a few minutes.', -1);
+            } else {
+                onStep(`This is taking unusually long - ${elapsed} so far. ` +
+                       'The download may have stalled; you can wait or try again.', -1);
+            }
+        }, 1000);
+        return () => clearInterval(tick);
+    }
+
     async _boot(onStep = () => {}) {
         try {
-            // Kick the wheel download off immediately, then init Pyodide while
-            // it streams in. These used to run one after the other.
             onStep('Setting up your workspace…', 5);
             let stop = this._fakeProgress(5, 45, 12000, onStep, 'Setting up your workspace…');
             this.pyodide = await loadPyodide({ indexURL: PYODIDE_INDEX });
             stop();
 
-            onStep('Downloading PDF tools (17 MB)…', 45);
-            stop = this._fakeProgress(45, 88, 20000, onStep, 'Downloading PDF tools (17 MB)…');
-            await this.pyodide.loadPackage(PYMUPDF_WHEEL);
-            stop();
+            onStep('Downloading PDF tools (17.5 MB, one time)…', -1);
+            const unwatch = this._watchDownload(onStep);
+            try {
+                await this.pyodide.loadPackage(PYMUPDF_WHEEL);
+            } finally {
+                unwatch();
+            }
 
             onStep('Almost ready…', 90);
             const source = await (await fetch(`pdf_engine.py?v=${APP_VERSION}`)).text();
@@ -520,8 +560,14 @@ const UI = {
         const paint = (message, pct) => {
             this.bootMessage = message;
             step.textContent = message;
-            fill.style.width = `${pct}%`;
-            badgeText.textContent = message.length > 34 ? `${Math.round(pct)}%` : message;
+            // A negative percentage means the length is genuinely unknown.
+            // Showing a moving stripe says "working" without claiming a
+            // position the code cannot know.
+            const unknown = pct < 0;
+            fill.parentElement.classList.toggle('progress-bar--unknown', unknown);
+            if (!unknown) fill.style.width = `${pct}%`;
+            badgeText.textContent = unknown ? 'Downloading…'
+                : message.length > 34 ? `${Math.round(pct)}%` : message;
             // Keep a waiting operation's spinner in step with the download.
             if (!$('status-container').classList.contains('hidden')) {
                 $('status-text').textContent = message;
@@ -537,12 +583,32 @@ const UI = {
             badge.className = 'engine-badge engine-badge--ready';
             badgeText.textContent = 'Ready';
         } catch (err) {
+            // Say which part failed and offer another go, rather than asking
+            // for a page reload that starts the whole download again.
+            const reason = String(err && (err.message || err));
             this.bootMessage = 'Setup failed';
-            step.textContent = 'Could not finish setting up. Please check your connection and reload the page.';
+            step.innerHTML = (reason.includes('OFFLINE')
+                ? 'Could not reach the download. Check your connection, then try again.'
+                : reason.startsWith('HTTP_')
+                    ? `The download was refused (${reason.replace('HTTP_', 'error ')}). Try again in a moment.`
+                    : 'Could not finish setting up.') +
+                ' <button class="btn btn--sm" id="engine-retry">Try again</button>';
             fill.style.width = '100%';
             fill.style.background = 'var(--color-error)';
             badge.className = 'engine-badge engine-badge--error';
             badgeText.textContent = 'Setup failed';
+            const retry = $('engine-retry');
+            if (retry) {
+                retry.onclick = () => {
+                    fill.style.background = '';
+                    fill.style.width = '0%';
+                    badge.className = 'engine-badge engine-badge--loading';
+                    engine.ready = false;
+                    engine.error = null;
+                    engine._booting = null;
+                    this.bootEngine();
+                };
+            }
         }
     },
 

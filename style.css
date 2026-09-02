@@ -1153,6 +1153,22 @@ body {
 .export-card--off { opacity: 0.45; cursor: not-allowed; }
 .export-card--off:hover { border-color: var(--color-border); transform: none; box-shadow: none; }
 
+/* An indeterminate bar, for the one step whose length cannot be known.
+   A stripe that keeps moving says "working" without claiming a position. */
+.progress-bar--unknown .progress-fill {
+  width: 35% !important;
+  animation: progress-sweep 1.4s ease-in-out infinite;
+}
+
+@keyframes progress-sweep {
+  0%   { margin-left: -35%; }
+  100% { margin-left: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress-bar--unknown .progress-fill { animation: none; width: 100% !important; opacity: 0.5; }
+}
+
 .draw-ghost {
   position: absolute;
   border: 2px dashed var(--color-primary);
