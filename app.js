@@ -11,7 +11,7 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.33.0';
+const APP_VERSION = '4.34.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -1856,7 +1856,17 @@ const PagesTool = {
             e.preventDefault();
             this.step(e.shiftKey ? 'redo' : 'undo');
         });
-        $('pages-file').addEventListener('change', (e) => this.open(Array.from(e.target.files)));
+        // Once pages are on screen, choosing more has to add to them: replacing
+        // the lot was read as "it is not adding", and it threw away whatever
+        // reordering, rotating and trimming had been done. Start over is the
+        // way back to a clean sheet, rather than a second pick meaning it.
+        $('pages-file').addEventListener('change', (e) => {
+            const files = Array.from(e.target.files);
+            if (this.order.length) this.addFiles(files);
+            else this.open(files);
+        });
+        $('pages-add').addEventListener('click', () => $('pages-file').click());
+        $('pages-restart').addEventListener('click', () => this.restart());
         $('pages-rotate-left').addEventListener('click', () => this.rotate(-90));
         $('pages-rotate-right').addEventListener('click', () => this.rotate(90));
         $('pages-trim').addEventListener('click', () => this.trim());
@@ -1899,6 +1909,68 @@ const PagesTool = {
         await this.open(this.files);
     },
 
+    /** Add the pages of more PDFs to the end of what is already here.
+     *
+     * The pages already in the document keep their indices, so the order,
+     * rotations, crops and selection all stay valid and nothing has to be
+     * remapped. A snapshot is taken first, so adding a file by mistake is one
+     * Undo away like every other change in this tab.
+     */
+    async addFiles(files) {
+        if (!files.length) return;
+        await UI.run('Adding pages…', async () => {
+            this.snap();
+            let added = 0;
+            for (let i = 0; i < files.length; i++) {
+                const id = `pages_add_${i}`;
+                await engine.openDoc(id, await fileToBytes(files[i]), files[i].name);
+                const res = await engine.callJSON('append_pages', 'pages', id,
+                                                  files[i].name.replace(/\.pdf$/i, ''),
+                                                  $('pages-bookmarks').checked);
+                await engine.call('close_doc', id);
+                for (let pno = res.from; pno < res.pages; pno++) this.order.push(pno);
+                added += res.added;
+            }
+            this.files = [...(this.files || []), ...files];
+            Dirty.touch('pages');
+            this.refreshSteps();
+            await this.renderGrid();
+            this.describeDrop();
+            UI.toast(`${added} page${added === 1 ? '' : 's'} added`, 'success');
+        });
+    },
+
+    /** Back to a clean sheet, so a second pick can still mean "replace". */
+    restart() {
+        if (Dirty.slots.has('pages')
+            && !confirm('Discard this arrangement and start from new files?')) return;
+        this.order = [];
+        this.rotations = {};
+        this.crops = {};
+        this.selected.clear();
+        this.past = [];
+        this.futures = [];
+        this.files = null;
+        this.refreshSteps();
+        Dirty.clear('pages');
+        $('pages-grid').innerHTML = '';
+        $('pages-workspace').classList.add('hidden');
+        $('pages-untrim').classList.add('hidden');
+        $('pages-bundle-note').classList.add('hidden');
+        this.describeDrop();
+        $('pages-file').click();
+    },
+
+    /** The drop zone says what choosing files will do, which changes once
+     *  there are pages to add to. */
+    describeDrop() {
+        const text = $('pages-drop-text');
+        if (!text) return;
+        text.textContent = this.order.length
+            ? 'Drop more PDFs here to add them to the end'
+            : 'Drop one or more PDFs here (multiple files will be merged in order)';
+    },
+
     async open(files) {
         if (!files.length) return;
         // Kept so a change to the bundle options can rebuild from the same
@@ -1938,6 +2010,7 @@ const PagesTool = {
             Dirty.clear('pages');
             $('pages-workspace').classList.remove('hidden');
             await this.renderGrid();
+            this.describeDrop();
             UI.toast(`${info.pages} pages loaded`, 'success');
         });
     },

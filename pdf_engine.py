@@ -1156,6 +1156,48 @@ def _contents_pages(out, entries, title, lead):
     return per_page
 
 
+def append_pages(doc_id, src_id, label="", bookmark=False):
+    """Add every page of src_id to the end of doc_id, keeping the outline.
+
+    Organize used to have no way to add to what was already arranged: choosing
+    more files rebuilt the tab from just those files, so the pages already
+    there - and any reordering, rotating or trimming done to them - were
+    simply gone. Appending leaves all of that alone, because the pages that
+    were already in the document keep the indices the tab is holding.
+
+    insert_pdf discards the outline of the document it writes into, which
+    would silently throw away a bundle's bookmarks, so the existing entries
+    are read first and put back afterwards along with the new file's own,
+    nested under its name.
+    """
+    doc = _doc(doc_id)
+    src = _doc(src_id)
+    base = doc.page_count
+
+    try:
+        toc = doc.get_toc(simple=True) or []
+    except Exception:
+        toc = []
+    try:
+        inner = src.get_toc(simple=True) or []
+    except Exception:
+        inner = []
+
+    doc.insert_pdf(src)
+
+    if bookmark and src.page_count:
+        name = str(label).strip() or f"Pages {base + 1}-{doc.page_count}"
+        toc.append([1, name, base + 1])
+        for entry in inner:
+            level, entry_name, pno = entry[0], entry[1], entry[2]
+            if pno > 0:
+                toc.append([level + 1, entry_name, pno + base])
+    if toc:
+        doc.set_toc(toc)
+
+    return json.dumps({"pages": doc.page_count, "added": doc.page_count - base, "from": base})
+
+
 def merge(doc_ids_json, labels_json="", bookmarks=False, contents=False, title="Contents"):
     """Concatenate several open documents, in the order given.
 
@@ -1194,16 +1236,26 @@ def merge(doc_ids_json, labels_json="", bookmarks=False, contents=False, title="
         _contents_pages(out, [(label_for(i), starts[i] + lead) for i in range(len(ids))],
                         title, lead)
 
-    if wanted and bookmarks:
-        toc = []
-        if lead:
-            toc.append([1, title, 1])
-        for index, start in enumerate(starts):
+    # insert_pdf discards the outline of the document it writes into, so
+    # whatever the sources brought has to be put back deliberately. It used to
+    # be put back only for a bundle with the per-file bookmark option on,
+    # which meant opening a single PDF here - or a bundle with that box
+    # unticked - quietly destroyed every bookmark it had. The parent entry per
+    # file is the option; keeping the sources' own bookmarks is not.
+    per_file = bool(wanted and bookmarks)
+    toc = []
+    if per_file and lead:
+        toc.append([1, title, 1])
+    for index, start in enumerate(starts):
+        nest = 0
+        if per_file:
             toc.append([1, label_for(index), start + lead + 1])
-            for entry in inner[index]:
-                level, name, pno = entry[0], entry[1], entry[2]
-                if pno > 0:
-                    toc.append([level + 1, name, start + lead + pno])
+            nest = 1
+        for entry in inner[index]:
+            level, name, pno = entry[0], entry[1], entry[2]
+            if pno > 0:
+                toc.append([level + nest, name, start + lead + pno])
+    if toc:
         out.set_toc(toc)
 
     # A bundle is only as shareable as its most restricted part, so the
