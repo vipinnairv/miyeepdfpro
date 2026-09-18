@@ -23,7 +23,7 @@ Fifteen tools, reachable from a dashboard on the home screen.
 - **Find & Replace** - genuine search-and-replace inside a PDF, each replacement taking the font, size and colour of the text it replaces.
 
 **Organise**
-- **Pages** - merge, split, reorder by drag-and-drop, rotate and delete, with **undo and redo** over every one of them.
+- **Pages** - merge, split, reorder by drag-and-drop, rotate and delete, with **undo and redo** over every one of them. **Add PDFs** appends more files to the end of what is already arranged, leaving the reordering, rotating and trimming already done to the pages in place - choosing files a second time used to rebuild the tab from just those files, so the work was silently thrown away. Start over is there when replacing is what you actually want.
 - **Auto-Split** - cut a combined bundle wherever a marker appears, so each invoice or statement becomes its own file, named from the matched text.
 - **Compare** - word-level diff between two versions, with changes highlighted in a downloadable copy. Text that only **moved** is reported as a move rather than as a deletion here and an unrelated rewrite there, and counted once.
 - **Compress** - recompress images and clean the file while text stays real, searchable text. Takes several files at once.

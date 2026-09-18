@@ -13,14 +13,14 @@
 
     <!-- SVG first for modern browsers; .ico covers older ones and the
          automatic /favicon.ico request. -->
-    <link rel="icon" href="favicon.svg?v=4.33.0" type="image/svg+xml">
-    <link rel="icon" href="favicon.ico?v=4.33.0" sizes="16x16 32x32 48x48">
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.33.0">
-    <link rel="manifest" href="site.webmanifest?v=4.33.0">
+    <link rel="icon" href="favicon.svg?v=4.34.0" type="image/svg+xml">
+    <link rel="icon" href="favicon.ico?v=4.34.0" sizes="16x16 32x32 48x48">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.34.0">
+    <link rel="manifest" href="site.webmanifest?v=4.34.0">
 
     <!-- ?v= busts the browser cache on redeploy: without it a stale app.js/style.css
          pair silently breaks the page. Bump APP_VERSION in app.js to match. -->
-    <link rel="stylesheet" href="style.css?v=4.33.0">
+    <link rel="stylesheet" href="style.css?v=4.34.0">
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <!-- Only for digital signatures: reads a .p12/.pfx and builds the CMS
@@ -31,7 +31,7 @@
     <header class="header">
         <div class="header__content">
             <h1 class="header__title">
-                <img class="header__logo" src="logo.svg?v=4.33.0" alt="" width="34" height="34">
+                <img class="header__logo" src="logo.svg?v=4.34.0" alt="" width="34" height="34">
                 MiyeePDF <span class="header__byline">Built by Vipin Nair</span>
             </h1>
             <div class="header__right">
@@ -270,7 +270,7 @@
                 <p>Reorder, rotate, delete, merge and split - without ever degrading quality</p>
             </div>
             <div class="file-drop-zone" data-drop="pages" role="button" tabindex="0" aria-label="Choose a PDF, or drop one here">
-                <p>Drop one or more PDFs here (multiple files will be merged in order)</p>
+                <p id="pages-drop-text">Drop one or more PDFs here (multiple files will be merged in order)</p>
                 <input type="file" id="pages-file" accept=".pdf" multiple hidden>
                 <button class="btn btn--primary" data-pick="pages-file">Select PDFs</button>
             </div>
@@ -306,6 +306,12 @@
                         <button class="btn btn--sm" id="pages-delete">🗑️ Delete</button>
                         <button class="btn btn--sm" id="pages-trim" title="Cut the blank margins off">✂️ Trim margins</button>
                         <button class="btn btn--sm hidden" id="pages-untrim">↺ Undo trim</button>
+                    </div>
+                    <div class="tool-group">
+                        <button class="btn btn--sm btn--primary" id="pages-add"
+                                title="Add more PDFs to the end of what is here">➕ Add PDFs</button>
+                        <button class="btn btn--sm" id="pages-restart"
+                                title="Discard this arrangement and start from new files">↺ Start over</button>
                     </div>
                     <div class="tool-group">
                         <button class="btn btn--sm" id="pages-select-all">Select All</button>
@@ -1232,6 +1238,6 @@
         </div>
     </footer>
 
-    <script src="app.js?v=4.33.0"></script>
+    <script src="app.js?v=4.34.0"></script>
 </body>
 </html>
