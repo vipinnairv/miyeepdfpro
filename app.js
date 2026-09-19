@@ -11,7 +11,7 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.34.0';
+const APP_VERSION = '4.35.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -383,6 +383,16 @@ function b64ToBytes(b64) {
     const out = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
     return out;
+}
+
+/** A picked image file as bare base64, which is what the engine takes. */
+function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+        reader.onerror = () => reject(new Error('That image could not be read'));
+        reader.readAsDataURL(file);
+    });
 }
 
 /** PDF colour integer (0xRRGGBB) as a CSS colour. */
@@ -1054,6 +1064,20 @@ const EditTool = {
                                    { bindKeys: false, onStep: (d) => this.step(d) });
         $('edit-file').addEventListener('change', (e) => this.open(e.target.files[0]));
 
+        $('edit-image-add').addEventListener('click', () => {
+            this.imageAction = 'add';
+            $('edit-image-file').click();
+        });
+        $('edit-image-replace').addEventListener('click', () => {
+            this.imageAction = 'replace';
+            $('edit-image-file').click();
+        });
+        $('edit-image-delete').addEventListener('click', () => this.deleteImage());
+        $('edit-image-file').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            e.target.value = '';
+            this.useImageFile(file);
+        });
         $$('[data-editmode]').forEach((btn) => btn.addEventListener('click', () => {
             this.mode = btn.dataset.editmode;
             $$('[data-editmode]').forEach((b) => b.classList.toggle('active', b === btn));
@@ -1061,9 +1085,15 @@ const EditTool = {
                 this.mode === 'TEXT' ? 'Tap a highlighted line and type - you edit straight on the page. Clear the box to delete the line.'
               : this.mode === 'BLOCK' ? 'Tap a paragraph and rewrite it in place - the text rewraps to fit.'
               : this.mode === 'ADD' ? 'Tap anywhere on the page to add new text there.'
+              : this.mode === 'WHITEOUT' ? 'Drag over anything you want covered.'
+              : this.mode === 'IMAGE' ? 'Click a picture to select it, then drag it, pull a corner to resize, or replace it.'
               : `Drag across the page to add a ${this.mode} annotation.`;
             $('edit-add-options').classList.toggle('hidden', this.mode !== 'ADD');
+            $('edit-white-options').classList.toggle('hidden', this.mode !== 'WHITEOUT');
+            $('edit-white-warning').classList.toggle('hidden', this.mode !== 'WHITEOUT');
+            $('edit-image-options').classList.toggle('hidden', this.mode !== 'IMAGE');
             this.view.overlay.classList.toggle('overlay--add', this.mode === 'ADD');
+            this.showImages(this.mode === 'IMAGE');
             this.drawSpans();
         }));
 
@@ -1412,7 +1442,9 @@ const EditTool = {
         // changes length, so they sit on the box rather than in a panel
         // somewhere else. Both preview live: what is on screen while typing
         // is what gets written into the page.
-        const state = { size: item.size, width: 0, origWidth: item.wFrac };
+        const state = { size: item.size, width: 0, origWidth: item.wFrac,
+                        family: '', bold: null, italic: null,
+                        color: item.colorInt, align: 'left' };
 
         const tag = document.createElement('div');
         tag.className = 'inline-edit__tag';
@@ -1421,8 +1453,13 @@ const EditTool = {
 
         const label = document.createElement('span');
         const describe = () => {
-            label.textContent = `${item.font} · ${state.size.toFixed(1)}pt`
-                + (spec.exact ? '' : ' · lookalike');
+            const NAMES = { sans: 'Sans', serif: 'Serif', mono: 'Mono' };
+            const face = NAMES[state.family] || item.font;
+            // Choosing a weight, a slant or a face means the document's own
+            // font cannot be reused, so say which face is really going in.
+            const swapped = state.family || state.bold !== null || state.italic !== null;
+            label.textContent = `${face} · ${state.size.toFixed(1)}pt`
+                + (spec.exact && !swapped ? '' : ' · lookalike');
         };
         const smaller = document.createElement('button');
         smaller.type = 'button';
@@ -1451,11 +1488,95 @@ const EditTool = {
         bigger.addEventListener('mousedown', (e) => { e.preventDefault(); applySize(state.size + 0.5); });
         describe();
 
+        // The rest of the format panel. Everything here previews on the box
+        // itself, so the page you are looking at is the page you will get.
+        //
+        // Three families, not a list of system fonts: a browser can only
+        // embed the base-14 faces without shipping font files, so offering
+        // Calibri would be offering a face the saved file could not carry.
+        const family = document.createElement('select');
+        family.className = 'inline-edit__select';
+        family.title = 'Typeface';
+        for (const [value, text] of [['', 'Keep font'], ['sans', 'Sans'],
+                                     ['serif', 'Serif'], ['mono', 'Mono']]) {
+            const opt = document.createElement('option');
+            opt.value = value; opt.textContent = text;
+            family.append(opt);
+        }
+        const PREVIEW = { sans: 'Helvetica, Arial, sans-serif',
+                          serif: '"Times New Roman", Times, serif',
+                          mono: 'ui-monospace, "Courier New", monospace' };
+        family.addEventListener('change', () => {
+            state.family = family.value;
+            el.style.fontFamily = PREVIEW[family.value] || spec.family;
+            describe();
+        });
+
+        const toggle = (labelText, title, onChange) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'inline-edit__step inline-edit__toggle';
+            b.textContent = labelText;
+            b.title = title;
+            b.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                b.classList.toggle('is-on');
+                onChange(b.classList.contains('is-on'));
+                describe();
+            });
+            return b;
+        };
+        const boldBtn = toggle('B', 'Bold (Ctrl+B)', (on) => {
+            state.bold = on; el.style.fontWeight = on ? '700' : spec.weight;
+        });
+        const italicBtn = toggle('I', 'Italic (Ctrl+I)', (on) => {
+            state.italic = on; el.style.fontStyle = on ? 'italic' : spec.style;
+        });
+        if (spec.weight === '700' || spec.weight === 'bold') boldBtn.classList.add('is-on');
+        if (spec.style === 'italic') italicBtn.classList.add('is-on');
+
+        const colour = document.createElement('input');
+        colour.type = 'color';
+        colour.className = 'inline-edit__colour';
+        colour.title = 'Text colour';
+        colour.value = intToCss(item.colorInt);
+        colour.addEventListener('input', () => {
+            state.color = parseInt(colour.value.slice(1), 16);
+            el.style.color = colour.value;
+        });
+
+        const aligns = document.createElement('span');
+        aligns.className = 'inline-edit__aligns';
+        for (const [value, glyph, title] of [['left', '⯇', 'Align left'],
+                                             ['center', '≡', 'Centre'],
+                                             ['right', '⯈', 'Align right']]) {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'inline-edit__step' + (value === 'left' ? ' is-on' : '');
+            b.textContent = glyph;
+            b.title = title;
+            b.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                state.align = value;
+                el.style.textAlign = value;
+                aligns.querySelectorAll('button').forEach((o) => o.classList.toggle('is-on', o === b));
+            });
+            aligns.append(b);
+        }
+
         const help = document.createElement('span');
         help.className = 'inline-edit__help';
         help.textContent = isBlock ? 'Ctrl+Enter applies · Esc cancels'
                                    : 'Enter applies · Esc cancels · drag the edge to widen';
-        tag.append(smaller, bigger, label, help);
+        tag.append(smaller, bigger, family, boldBtn, italicBtn, colour, aligns, label, help);
+
+        // Ctrl+B and Ctrl+I, because every editor has them.
+        el.addEventListener('keydown', (e) => {
+            if (!e.ctrlKey && !e.metaKey) return;
+            const key = e.key.toLowerCase();
+            if (key === 'b') { e.preventDefault(); boldBtn.dispatchEvent(new MouseEvent('mousedown')); }
+            if (key === 'i') { e.preventDefault(); italicBtn.dispatchEvent(new MouseEvent('mousedown')); }
+        });
 
         // Drag the right edge, the way a text box behaves in Acrobat. The
         // text rewraps as it goes, so the result is visible before it is
@@ -1571,7 +1692,9 @@ const EditTool = {
         // whenever the text matched meant a size change or a dragged box was
         // reported as applied and then quietly thrown away.
         const resized = Math.abs(state.size - item.size) > 0.01 || state.width > 0;
-        if (next === item.text && !resized) return;
+        const restyled = !!state.family || state.bold !== null || state.italic !== null
+                         || state.color !== item.colorInt || state.align !== 'left';
+        if (next === item.text && !resized && !restyled) return;
 
         // Emptying the box deletes the text. This used to do nothing at all,
         // silently, leaving no way to remove a line. Deletion is worth
@@ -1593,7 +1716,8 @@ const EditTool = {
             const res = await engine.callJSON(isBlock ? 'edit_block' : 'edit_text',
                                               this.view.docId, this.view.page, item.bbox,
                                               next, item.font, state.size,
-                                              item.colorInt, item.flags,
+                                              state.color === undefined ? item.colorInt : state.color,
+                                              item.flags,
                                               ...(isBlock ? [true, this.coverPixels]
                                                           : [this.coverPixels,
                                                              // the baseline, the room asked
@@ -1604,7 +1728,10 @@ const EditTool = {
                                                              state.width || 0,
                                                              item.text,
                                                              item.alpha === undefined ? 1 : item.alpha,
-                                                             0, item.size]));
+                                                             0, item.size,
+                                                             state.family || '',
+                                                             state.bold, state.italic,
+                                                             state.align || 'left']));
             await this.view.render();
             await this.refreshHistory();
             if (deleting) return UI.toast('Text deleted from the page', 'success');
@@ -1645,6 +1772,159 @@ const EditTool = {
         }));
     },
 
+    /** Show every picture on the page as something you can take hold of.
+     *
+     * Acrobat and Sejda both let you move a logo or swap a stamp; this tab
+     * could only ever export images, never touch one. The boxes are drawn
+     * over the rendered page from the engine's own list, so what you grab is
+     * the real placement rather than a guess from the picture.
+     */
+    async showImages(on) {
+        const overlay = this.view.overlay;
+        overlay.querySelectorAll('.img-box').forEach((el) => el.remove());
+        this.pickedImage = null;
+        this.refreshImageButtons();
+        if (!on || !this.view.info) return;
+
+        const list = await engine.callJSON('page_images', this.view.docId, this.view.page);
+        this.pageImages = list;
+        const size = this.view.info.sizes[this.view.page];
+        list.forEach((img, index) => {
+            const [x0, y0, x1, y1] = img.bbox;
+            const box = document.createElement('div');
+            box.className = 'img-box';
+            box.dataset.index = index;
+            box.style.left = `${(x0 / size.width) * 100}%`;
+            box.style.top = `${(y0 / size.height) * 100}%`;
+            box.style.width = `${((x1 - x0) / size.width) * 100}%`;
+            box.style.height = `${((y1 - y0) / size.height) * 100}%`;
+            for (const corner of ['nw', 'ne', 'sw', 'se']) {
+                const h = document.createElement('i');
+                h.className = `img-box__handle img-box__handle--${corner}`;
+                h.dataset.corner = corner;
+                box.appendChild(h);
+            }
+            box.addEventListener('mousedown', (e) => this.grabImage(e, index, box));
+            overlay.appendChild(box);
+        });
+        $('edit-image-note').textContent = list.length
+            ? `${list.length} picture${list.length === 1 ? '' : 's'} on this page.`
+            : 'No pictures on this page.';
+    },
+
+    refreshImageButtons() {
+        const has = this.pickedImage !== null && this.pickedImage !== undefined;
+        $('edit-image-replace').disabled = !has;
+        $('edit-image-delete').disabled = !has;
+    },
+
+    /** Move the picture, or pull a corner to resize it. */
+    grabImage(event, index, box) {
+        event.preventDefault();
+        event.stopPropagation();
+        this.pickedImage = index;
+        this.view.overlay.querySelectorAll('.img-box').forEach(
+            (el) => el.classList.toggle('is-picked', el === box));
+        this.refreshImageButtons();
+
+        const corner = event.target.dataset.corner || '';
+        const startRect = box.getBoundingClientRect();
+        const parent = this.view.overlay.getBoundingClientRect();
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const base = { left: startRect.left - parent.left, top: startRect.top - parent.top,
+                       width: startRect.width, height: startRect.height };
+        let moved = false;
+
+        const onMove = (e) => {
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+            if (!moved && Math.abs(dx) + Math.abs(dy) < 3) return;
+            moved = true;
+            let { left, top, width, height } = base;
+            if (!corner) {
+                left += dx; top += dy;
+            } else {
+                if (corner.includes('w')) { left += dx; width -= dx; }
+                if (corner.includes('e')) { width += dx; }
+                if (corner.includes('n')) { top += dy; height -= dy; }
+                if (corner.includes('s')) { height += dy; }
+            }
+            if (width < 8 || height < 8) return;
+            Object.assign(box.style, {
+                left: `${(left / parent.width) * 100}%`, top: `${(top / parent.height) * 100}%`,
+                width: `${(width / parent.width) * 100}%`, height: `${(height / parent.height) * 100}%`,
+            });
+        };
+        const onUp = async () => {
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup', onUp);
+            if (!moved) return;
+            const now = box.getBoundingClientRect();
+            const size = this.view.info.sizes[this.view.page];
+            const toPt = (px, span, pts) => (px / span) * pts;
+            const bbox = [
+                toPt(now.left - parent.left, parent.width, size.width),
+                toPt(now.top - parent.top, parent.height, size.height),
+                toPt(now.right - parent.left, parent.width, size.width),
+                toPt(now.bottom - parent.top, parent.height, size.height),
+            ];
+            const img = this.pageImages[index];
+            await UI.run('Moving the picture…', async () => {
+                await this.mark();
+                await engine.call('move_page_image', this.view.docId, this.view.page,
+                                  img.xref, JSON.stringify(img.bbox), JSON.stringify(bbox), true);
+                await this.view.render();
+                await this.refreshHistory();
+                await this.showImages(true);
+            });
+        };
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+    },
+
+    async deleteImage() {
+        const img = this.pageImages[this.pickedImage];
+        if (!img) return;
+        if (!confirm('Remove this picture from the page?')) return;
+        await UI.run('Removing the picture…', async () => {
+            await this.mark();
+            await engine.call('delete_page_image', this.view.docId, this.view.page,
+                              JSON.stringify(img.bbox));
+            await this.view.render();
+            await this.refreshHistory();
+            await this.showImages(true);
+            UI.toast('Removed - the picture is gone from the file, not just hidden', 'success');
+        });
+    },
+
+    /** Put a picture on the page, or swap the one already selected for it. */
+    async useImageFile(file) {
+        if (!file) return;
+        const b64 = await fileToBase64(file);
+        const replacing = this.imageAction === 'replace' && this.pageImages[this.pickedImage];
+        await UI.run(replacing ? 'Replacing the picture…' : 'Adding the picture…', async () => {
+            await this.mark();
+            if (replacing) {
+                await engine.call('replace_page_image', this.view.docId, this.view.page,
+                                  this.pageImages[this.pickedImage].xref, b64);
+            } else {
+                // Dropped into the middle of the page at a readable size, then
+                // moved or resized like any other picture.
+                const size = this.view.info.sizes[this.view.page];
+                const w = size.width * 0.3;
+                const h = w * 0.75;
+                await engine.call('place_image', this.view.docId, this.view.page, b64,
+                                  JSON.stringify([size.width / 2 - w / 2, size.height / 2 - h / 2,
+                                                  size.width / 2 + w / 2, size.height / 2 + h / 2]),
+                                  true);
+            }
+            await this.view.render();
+            await this.refreshHistory();
+            await this.showImages(true);
+        });
+    },
+
     /** Drag a rectangle to place an annotation. */
     setupDragAnnotate() {
         const overlay = this.view.overlay;
@@ -1652,7 +1932,7 @@ const EditTool = {
         let ghost = null;
 
         overlay.addEventListener('mousedown', (e) => {
-            if (this.mode === 'TEXT') return;
+            if (this.mode === 'TEXT' || this.mode === 'BLOCK' || this.mode === 'IMAGE') return;
             start = this.view.fracFromEvent(e);
             ghost = document.createElement('div');
             ghost.className = 'draw-ghost';
@@ -1675,6 +1955,23 @@ const EditTool = {
             start = null;
             if (ghost) { ghost.remove(); ghost = null; }
             if (Math.abs(end.x - from.x) < 0.01 || Math.abs(end.y - from.y) < 0.005) return;
+
+            if (this.mode === 'WHITEOUT') {
+                const size = this.view.info.sizes[this.view.page];
+                const rect = [Math.min(from.x, end.x) * size.width,
+                              Math.min(from.y, end.y) * size.height,
+                              Math.max(from.x, end.x) * size.width,
+                              Math.max(from.y, end.y) * size.height];
+                return UI.run('Covering…', async () => {
+                    await this.mark();
+                    await engine.call('whiteout', this.view.docId, this.view.page,
+                                      JSON.stringify([rect]), $('edit-white-color').value,
+                                      $('edit-white-sample').checked);
+                    await this.view.render();
+                    await this.refreshHistory();
+                    UI.toast('Covered - the text underneath is still in the file', 'success');
+                });
+            }
 
             const needsText = this.mode === 'note' || this.mode === 'freetext';
             const text = needsText ? (prompt('Comment text:') || '') : '';
