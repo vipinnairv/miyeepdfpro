@@ -2461,6 +2461,17 @@ def check_footing(doc_id, pages_spec=""):
     for pno in _page_indices(doc, pages_spec):
         page = doc[pno]
         _progress(pno, doc.page_count, "Casting page")
+
+        # Only rows calling themselves a total are ever tested, so a page
+        # with no such word cannot produce a result and does not need looking
+        # at. Worth the check because finding tables on a page that has no
+        # ruling lines falls back to comparing every character against every
+        # candidate cell - measured at 73 ms a page, against well under one
+        # for reading the text and finding nothing.
+        haystack = page.get_text().lower()
+        if not any(word in haystack for word in _TOTAL_WORDS):
+            continue
+
         for tno, table in enumerate(_find_page_tables(page)):
             try:
                 rows = table.extract()
