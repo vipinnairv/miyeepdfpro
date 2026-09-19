@@ -11,7 +11,7 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.36.0';
+const APP_VERSION = '4.37.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -831,6 +831,10 @@ const UI = {
 /* reusable single-document page viewer                                */
 /* ------------------------------------------------------------------ */
 
+/** How many rendered pages to keep. Enough to flip around a schedule and
+ *  its annexures without re-drawing, small enough not to hoard megabytes. */
+const KEEP_PAGES = 12;
+
 class DocView {
     /** @param {string} key matches the element id prefix used in index.html */
     constructor(key, { onRender } = {}) {
@@ -838,6 +842,8 @@ class DocView {
         this.docId = key;
         this.page = 0;
         this.pages = 0;
+        /** Rendered page images, keyed by page and dpi. See render(). */
+        this._pages = new Map();
         this.info = null;
         this.file = null;
         this.onRender = onRender;
@@ -1035,17 +1041,52 @@ class DocView {
     async go(index) {
         if (index < 0 || index >= this.pages) return;
         this.page = index;
-        await this.render();
+        // Turning pages is the one thing done over and over in a long file,
+        // and a page already looked at does not need drawing again.
+        await this.render(true);
     }
 
-    async render() {
+    /** Remember a page image so coming back to it costs nothing.
+     *
+     * Only navigation reads this. Everything that changes the document goes
+     * through the ordinary render, which empties the cache first - a stale
+     * picture of a page that has just been edited would be a far worse bug
+     * than a slow page turn.
+     */
+    cachePage(key, url) {
+        if (!this._pages) this._pages = new Map();
+        this._pages.set(key, url);
+        while (this._pages.size > KEEP_PAGES) {
+            const oldest = this._pages.keys().next().value;
+            const stale = this._pages.get(oldest);
+            this._pages.delete(oldest);
+            if (stale !== this._url) URL.revokeObjectURL(stale);
+        }
+    }
+
+    forgetPages() {
+        if (!this._pages) return;
+        for (const url of this._pages.values()) {
+            if (url !== this._url) URL.revokeObjectURL(url);
+        }
+        this._pages.clear();
+    }
+
+    async render(fromCache = false) {
         // Render at the zoom level so magnifying reveals detail instead of
         // enlarging the same pixels. Capped so a 4x zoom cannot ask for a
         // page render big enough to stall the tab.
         const dpi = Math.round(Math.min(110 * Math.max(this.zoom || 1, 1), 300));
-        const png = await engine.call('render_page', this.docId, this.page, dpi);
-        if (this._url) URL.revokeObjectURL(this._url);
-        this._url = URL.createObjectURL(new Blob([png], { type: 'image/png' }));
+        const key = `${this.page}@${dpi}`;
+        if (!fromCache) this.forgetPages();
+
+        let url = fromCache && this._pages ? this._pages.get(key) : null;
+        if (!url) {
+            const png = await engine.call('render_page', this.docId, this.page, dpi);
+            url = URL.createObjectURL(new Blob([png], { type: 'image/png' }));
+            this.cachePage(key, url);
+        }
+        this._url = url;
         await new Promise((resolve) => {
             this.img.onload = resolve;
             this.img.src = this._url;
