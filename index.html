@@ -13,14 +13,14 @@
 
     <!-- SVG first for modern browsers; .ico covers older ones and the
          automatic /favicon.ico request. -->
-    <link rel="icon" href="favicon.svg?v=4.34.0" type="image/svg+xml">
-    <link rel="icon" href="favicon.ico?v=4.34.0" sizes="16x16 32x32 48x48">
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.34.0">
-    <link rel="manifest" href="site.webmanifest?v=4.34.0">
+    <link rel="icon" href="favicon.svg?v=4.35.0" type="image/svg+xml">
+    <link rel="icon" href="favicon.ico?v=4.35.0" sizes="16x16 32x32 48x48">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.35.0">
+    <link rel="manifest" href="site.webmanifest?v=4.35.0">
 
     <!-- ?v= busts the browser cache on redeploy: without it a stale app.js/style.css
          pair silently breaks the page. Bump APP_VERSION in app.js to match. -->
-    <link rel="stylesheet" href="style.css?v=4.34.0">
+    <link rel="stylesheet" href="style.css?v=4.35.0">
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <!-- Only for digital signatures: reads a .p12/.pfx and builds the CMS
@@ -31,7 +31,7 @@
     <header class="header">
         <div class="header__content">
             <h1 class="header__title">
-                <img class="header__logo" src="logo.svg?v=4.34.0" alt="" width="34" height="34">
+                <img class="header__logo" src="logo.svg?v=4.35.0" alt="" width="34" height="34">
                 MiyeePDF <span class="header__byline">Built by Vipin Nair</span>
             </h1>
             <div class="header__right">
@@ -163,6 +163,10 @@
                             <button class="mode-btn" data-editmode="freetext">💬 Callout</button>
                         </div>
                         <div class="tool-group">
+                            <button class="mode-btn" data-editmode="WHITEOUT">⬜ Whiteout</button>
+                            <button class="mode-btn" data-editmode="IMAGE">🖼️ Images</button>
+                        </div>
+                        <div class="tool-group">
                             <label class="tool-option">Colour <input type="color" id="edit-annot-color" value="#ffd400"></label>
                         </div>
                         <div class="tool-group hidden" id="edit-add-options">
@@ -173,7 +177,24 @@
                             <label class="tool-option"><input type="checkbox" id="edit-add-bold"> Bold</label>
                             <label class="tool-option"><input type="checkbox" id="edit-add-italic"> Italic</label>
                         </div>
+                        <div class="tool-group hidden" id="edit-white-options">
+                            <label class="tool-option">Colour <input type="color" id="edit-white-color" value="#ffffff"></label>
+                            <label class="tool-option"><input type="checkbox" id="edit-white-sample" checked>
+                                Match the paper</label>
+                        </div>
+                        <div class="tool-group hidden" id="edit-image-options">
+                            <button class="btn btn--sm" id="edit-image-add">＋ Add image</button>
+                            <button class="btn btn--sm" id="edit-image-replace" disabled>⇄ Replace</button>
+                            <button class="btn btn--sm" id="edit-image-delete" disabled>🗑️ Delete</button>
+                            <input type="file" id="edit-image-file" accept="image/*" hidden>
+                            <span class="muted" id="edit-image-note">Click a picture on the page.</span>
+                        </div>
                     </div>
+                    <p class="notice notice--warn hidden" id="edit-white-warning">
+                        <strong>Whiteout covers; it does not delete.</strong> The words underneath stay in the file and
+                        anyone who copies the text will still find them. Use it for tidying - a stray mark, a rule that
+                        will not line up. To actually remove something, use <strong>Redact</strong>.
+                    </p>
                     <p class="hint" id="edit-hint">Tap any highlighted text and type - you edit straight on the page, in the page&#39;s own font, on the line it already sits on. <strong>A−/A+</strong> on the box changes the size (or Ctrl+[ and Ctrl+]), and dragging its right edge changes how much room the words have. Switch modes above to annotate instead.</p>
 
                     <!-- Shown only for a scanned page, where the words are
@@ -1238,6 +1259,6 @@
         </div>
     </footer>
 
-    <script src="app.js?v=4.34.0"></script>
+    <script src="app.js?v=4.35.0"></script>
 </body>
 </html>

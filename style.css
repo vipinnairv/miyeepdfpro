@@ -2312,6 +2312,43 @@ body {
 .inline-edit__step:hover { background: color-mix(in srgb, var(--color-primary) 35%, transparent); }
 .inline-edit__help { opacity: 0.75; }
 
+/* The rest of the format panel, living on the same strip as the size steps. */
+.inline-edit__select,
+.inline-edit__colour { pointer-events: auto; }
+
+.inline-edit__select {
+    border: 1px solid color-mix(in srgb, var(--color-primary) 55%, transparent);
+    background: var(--color-primary);
+    color: var(--color-btn-primary-text);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-xs);
+    line-height: 1.6;
+    padding: 0 2px;
+    cursor: pointer;
+}
+
+.inline-edit__colour {
+    width: 18px;
+    height: 16px;
+    padding: 0;
+    border: 1px solid color-mix(in srgb, var(--color-primary) 55%, transparent);
+    border-radius: var(--radius-sm);
+    background: none;
+    cursor: pointer;
+}
+
+.inline-edit__toggle { font-weight: var(--font-weight-bold); min-width: 18px; }
+.inline-edit__toggle:nth-of-type(2) { font-style: italic; }
+
+/* A pressed control has to look pressed, or the panel cannot be read. */
+.inline-edit__step.is-on {
+    background: var(--color-btn-primary-text);
+    color: var(--color-primary);
+    border-color: var(--color-btn-primary-text);
+}
+
+.inline-edit__aligns { display: inline-flex; gap: 2px; }
+
 /* The grip sits on the right edge of the box being edited. */
 .inline-edit__grip {
     position: absolute;
@@ -2327,3 +2364,39 @@ body {
 }
 .inline-edit__grip:hover { opacity: 1; }
 .inline-edit { position: absolute; }
+
+
+/* Pictures on the page, made grabbable. The box is the engine's own idea of
+   where the image sits, so what you take hold of is the real placement. */
+.img-box {
+  position: absolute;
+  border: 1px dashed color-mix(in srgb, var(--color-primary) 70%, transparent);
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+  cursor: move;
+  pointer-events: auto;
+  z-index: 5;
+}
+
+.img-box:hover { background: color-mix(in srgb, var(--color-primary) 16%, transparent); }
+
+.img-box.is-picked {
+  border-style: solid;
+  border-width: 2px;
+  background: color-mix(in srgb, var(--color-primary) 20%, transparent);
+}
+
+.img-box__handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: var(--color-primary);
+  border: 1px solid var(--color-btn-primary-text);
+  border-radius: 2px;
+  opacity: 0;
+}
+
+.img-box.is-picked .img-box__handle { opacity: 1; }
+.img-box__handle--nw { left: -5px; top: -5px; cursor: nwse-resize; }
+.img-box__handle--ne { right: -5px; top: -5px; cursor: nesw-resize; }
+.img-box__handle--sw { left: -5px; bottom: -5px; cursor: nesw-resize; }
+.img-box__handle--se { right: -5px; bottom: -5px; cursor: nwse-resize; }

@@ -59,11 +59,19 @@ _HISTORY_BUDGET = 64 * 1024 * 1024
 # re-embed from the browser, so editing falls back to the closest of these.
 # Each family lists (regular, bold, italic, bold-italic) - PyMuPDF uses fixed
 # four-letter names, so these cannot be built by concatenating a suffix.
+# What PyMuPDF reports in a span's "flags".
+_SPAN_SUPERSCRIPT, _SPAN_ITALIC, _SPAN_SERIF, _SPAN_MONO, _SPAN_BOLD = 1, 2, 4, 8, 16
+
 _FONT_FAMILIES = {
     "helv": ("helv", "hebo", "heit", "hebi"),
     "tiro": ("tiro", "tibo", "tiit", "tibi"),
     "cour": ("cour", "cobo", "coit", "cobi"),
 }
+
+# What the format panel may ask for. Three is not a shortcut: a browser can
+# only embed the base-14 faces without shipping font files, so offering a list
+# of system fonts would be offering faces the saved file could not carry.
+_FAMILY_CHOICES = {"sans": "Helvetica", "serif": "Times", "mono": "Courier"}
 
 _FAMILY_ALIASES = {
     "helvetica": "helv", "arial": "helv", "verdana": "helv", "calibri": "helv",
@@ -113,13 +121,20 @@ def _pick_font(font_name, flags=0):
     if "dingbat" in name or "zapf" in name:
         return "zadb"
 
-    bold = "bold" in name or "black" in name or "heavy" in name or bool(flags & 2 ** 4)
-    italic = "italic" in name or "oblique" in name or bool(flags & 2 ** 1)
+    # The flags are the ones PyMuPDF puts on a span, which are not the PDF
+    # font-descriptor flags they were being read as:
+    #   1 superscript   2 italic   4 serifed   8 monospaced   16 bold
+    # Bit 0 was taken for fixed-pitch, so a superscript - a footnote marker,
+    # the 2 in m2 - came back Courier. Serifed and monospaced were never read
+    # at all, so a Times or Courier document fell back to Helvetica unless its
+    # name happened to contain a word the alias table knew.
+    bold = "bold" in name or "black" in name or "heavy" in name or bool(flags & _SPAN_BOLD)
+    italic = "italic" in name or "oblique" in name or bool(flags & _SPAN_ITALIC)
 
     family = "helv"
-    if flags & 2 ** 0:  # fixed-pitch flag
+    if flags & _SPAN_MONO:
         family = "cour"
-    elif flags & 2 ** 1 and "serif" in name:
+    elif flags & _SPAN_SERIF:
         family = "tiro"
     for key, value in _FAMILY_ALIASES.items():
         if key in name:
@@ -679,7 +694,8 @@ def _room_to_the_right(page, rect):
 
 def edit_text(doc_id, pno, bbox, new_text, font_name="", size=0, color_int=0,
               flags=0, cover=False, origin_json="", width=0.0,
-              original_text="", alpha=1.0, leading=0.0, original_size=0.0):
+              original_text="", alpha=1.0, leading=0.0, original_size=0.0,
+              family="", bold=None, italic=None, align="left"):
     """Replace the text in one span so the page does not look edited.
 
     The old glyphs are genuinely removed from the content stream (redaction),
@@ -728,6 +744,25 @@ def edit_text(doc_id, pno, bbox, new_text, font_name="", size=0, color_int=0,
         return json.dumps({"ok": True, "font": "", "exact": False, "covered": bool(cover),
                            "lines": 0, "size": 0, "tracking": 0})
 
+    # A face the person actually chose beats reusing the document's own.
+    #
+    # The embedded font is a subset: it carries the glyphs the document used
+    # and nothing else, so it cannot be made bold or italic, and asking it to
+    # be Times is meaningless. Whenever the panel asks for any of those, the
+    # reused face is dropped and a base-14 one is picked to match. That is a
+    # visible change to the page - which is the point, since it was asked for.
+    flags = int(flags or 0)
+    if bold is not None:
+        flags = (flags | _SPAN_BOLD) if bold else (flags & ~_SPAN_BOLD)
+    if italic is not None:
+        flags = (flags | _SPAN_ITALIC) if italic else (flags & ~_SPAN_ITALIC)
+    chosen = _FAMILY_CHOICES.get(str(family or "").lower())
+    if chosen or bold is not None or italic is not None:
+        buf = None
+        if chosen:
+            font_name = chosen
+            flags &= ~(_SPAN_SERIF | _SPAN_MONO)
+
     font, measurer, exact = _register_font(page, buf, font_name, flags)
     size = float(size) or (rect.height * 0.8)
 
@@ -772,8 +807,15 @@ def edit_text(doc_id, pno, bbox, new_text, font_name="", size=0, color_int=0,
         lines = _wrap_to_width(new_text, measurer, size, room)
 
     step = float(leading) or size * 1.2
+    how = str(align or "left").lower()
     for index, line in enumerate(lines):
-        _draw_run(page, start_x, baseline + index * step, line, font, size,
+        # Centring and ranging right are measured against the room the text
+        # has, not the page, so a centred heading sits centred in its own box.
+        offset = 0.0
+        if how in ("center", "centre", "right"):
+            slack = room - _measure(measurer, line, size)
+            offset = max(0.0, slack / 2 if how != "right" else slack)
+        _draw_run(page, start_x + offset, baseline + index * step, line, font, size,
                   _int_to_rgb(int(color_int)),
                   max(0.0, min(float(alpha or 1.0), 1.0)))
 
@@ -3279,6 +3321,131 @@ def export_page_images(doc_id, dpi=150, fmt="png", pages_spec="", quality=90):
 # --------------------------------------------------------------------------
 # annotations / review
 # --------------------------------------------------------------------------
+
+# --------------------------------------------------------------------------
+# whiteout and images on the page
+# --------------------------------------------------------------------------
+
+def whiteout(doc_id, pno, rects_json, color="#ffffff", sample=False):
+    """Paint over regions of a page.
+
+    This covers; it does not remove. The words underneath are still in the
+    file and anyone who extracts the text will find them - which is exactly
+    the trap the rest of this suite refuses to set, so the panel says so and
+    points at Redact, which deletes. Whiteout is for tidying: a stray mark, a
+    rule that will not line up, a footer being replaced.
+
+    `sample` takes the paper colour from the page itself instead of using
+    white, so a patch on a scan does not sit as a bright rectangle on paper
+    that is really cream.
+    """
+    doc = _doc(doc_id)
+    page = doc[int(pno)]
+    rects = json.loads(rects_json) if isinstance(rects_json, str) else list(rects_json)
+    painted = 0
+    for item in rects:
+        x0, y0, x1, y1 = [float(v) for v in item]
+        rect = pymupdf.Rect(x0, y0, x1, y1)
+        if rect.is_empty:
+            continue
+        fill = _sample_background(page, rect) if sample else _hex_to_rgb(color)
+        page.draw_rect(rect, color=None, fill=fill, width=0, overlay=True)
+        painted += 1
+    return json.dumps({"painted": painted})
+
+
+def page_images(doc_id, pno):
+    """Every image placed on a page, with where it sits."""
+    page = _doc(doc_id)[int(pno)]
+    out = []
+    seen = set()
+    for info in page.get_image_info(xrefs=True):
+        xref = int(info.get("xref") or 0)
+        bbox = info.get("bbox")
+        if not xref or not bbox:
+            continue
+        # One image can be placed more than once; each placement is its own
+        # entry, because moving one should not move the others.
+        key = (xref, tuple(round(v, 2) for v in bbox))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({
+            "xref": xref,
+            "bbox": [round(float(v), 2) for v in bbox],
+            "width": int(info.get("width") or 0),
+            "height": int(info.get("height") or 0),
+        })
+    return json.dumps(out)
+
+
+def _drop_image(page, bbox):
+    """Remove an image placement from a page, leaving everything else alone.
+
+    delete_image does not do this: it swaps the picture for a transparent
+    stub, so the placement stays on the page and keeps being listed. Measured
+    - deleting one of two images still reported two. Redaction removes the
+    drawing operation itself, and the text and line-art passes are switched
+    off so nothing but the picture goes.
+    """
+    x0, y0, x1, y1 = [float(v) for v in bbox]
+    page.add_redact_annot(pymupdf.Rect(x0, y0, x1, y1))
+    page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_REMOVE,
+                          graphics=pymupdf.PDF_REDACT_LINE_ART_NONE,
+                          text=pymupdf.PDF_REDACT_TEXT_NONE)
+
+
+def delete_page_image(doc_id, pno, bbox):
+    """Take an image off the page.
+
+    Unlike whiteout this really removes it: the placement goes and the pixels
+    with it, so nothing is left behind to extract.
+    """
+    page = _doc(doc_id)[int(pno)]
+    _drop_image(page, json.loads(bbox) if isinstance(bbox, str) else bbox)
+    return json.dumps({"ok": True})
+
+
+def replace_page_image(doc_id, pno, xref, data_b64):
+    """Swap the picture, keeping the space it occupies.
+
+    The new image lands in the same rectangle, which is what makes this the
+    right tool for a letterhead or a stamp: the layout does not move.
+    """
+    page = _doc(doc_id)[int(pno)]
+    page.replace_image(int(xref), stream=base64.b64decode(data_b64))
+    return json.dumps({"ok": True})
+
+
+def place_image(doc_id, pno, data_b64, bbox, keep_ratio=True):
+    """Put an image on the page at a given rectangle."""
+    page = _doc(doc_id)[int(pno)]
+    x0, y0, x1, y1 = [float(v) for v in (json.loads(bbox) if isinstance(bbox, str) else bbox)]
+    page.insert_image(pymupdf.Rect(x0, y0, x1, y1), stream=base64.b64decode(data_b64),
+                      keep_proportion=bool(keep_ratio), overlay=True)
+    return json.dumps({"ok": True})
+
+
+def move_page_image(doc_id, pno, xref, was, bbox, keep_ratio=True):
+    """Move or resize an image already on the page.
+
+    There is no API for nudging a placement, so the picture is read out,
+    the old placement deleted and the same bytes put back at the new
+    rectangle. Doing it in that order matters: deleting first would drop the
+    only reference and take the pixels with it.
+    """
+    doc = _doc(doc_id)
+    page = doc[int(pno)]
+    data = doc.extract_image(int(xref))
+    if not data or not data.get("image"):
+        raise ValueError("That image could not be read back")
+    blob = data["image"]
+    _drop_image(page, json.loads(was) if isinstance(was, str) else was)
+    x0, y0, x1, y1 = [float(v) for v in (json.loads(bbox) if isinstance(bbox, str) else bbox)]
+    page.insert_image(pymupdf.Rect(x0, y0, x1, y1), stream=blob,
+                      keep_proportion=bool(keep_ratio), overlay=True)
+    return json.dumps({"ok": True})
+
 
 def annotate(doc_id, pno, kind, x0, y0, x1, y1, text="", color="#ffd400", author=""):
     """Add a real PDF annotation that other readers (including Acrobat) understand."""
