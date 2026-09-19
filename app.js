@@ -11,7 +11,7 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.35.0';
+const APP_VERSION = '4.36.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -383,6 +383,40 @@ function b64ToBytes(b64) {
     const out = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
     return out;
+}
+
+/** A figure grouped the way it is written here: 12,34,567.89, not
+ *  1,234,567.89. Returns null when the text is not a figure at all. */
+function indianGroup(text, decimals) {
+    const raw = String(text == null ? '' : text).trim();
+    const bare = raw.replace(/[^0-9.\-]/g, '');
+    if (!bare || !/\d/.test(bare) || Number.isNaN(Number(bare))) return null;
+    const negative = Number(bare) < 0 || /^\(.*\)$/.test(raw);
+    const places = decimals === undefined
+        ? (raw.includes('.') ? (raw.split('.')[1].match(/\d*/)[0] || '').length : 0)
+        : decimals;
+    const fixed = Math.abs(Number(bare)).toFixed(places);
+    const [whole, fraction] = fixed.split('.');
+    let out = whole;
+    if (whole.length > 3) {
+        const tail = whole.slice(-3);
+        let head = whole.slice(0, -3);
+        const parts = [];
+        while (head.length > 2) { parts.unshift(head.slice(-2)); head = head.slice(0, -2); }
+        if (head) parts.unshift(head);
+        out = parts.concat(tail).join(',');
+    }
+    const body = out + (fraction ? `.${fraction}` : '');
+    if (!negative) return body;
+    // Brackets are how a negative is written in a set of accounts, so a
+    // figure that arrived in brackets goes back in brackets.
+    return /^\(.*\)$/.test(raw) ? `(${body})` : `-${body}`;
+}
+
+/** Text from a document, safe to drop into markup. */
+function safeText(value) {
+    return String(value == null ? '' : value)
+        .replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
 }
 
 /** A picked image file as bare base64, which is what the engine takes. */
@@ -1073,6 +1107,9 @@ const EditTool = {
             $('edit-image-file').click();
         });
         $('edit-image-delete').addEventListener('click', () => this.deleteImage());
+        $('edit-foot').addEventListener('click', () => this.checkFooting());
+        $('edit-block-save').addEventListener('click', () => this.saveBlock());
+        this.renderBlocks();
         $('edit-image-file').addEventListener('change', (e) => {
             const file = e.target.files[0];
             e.target.value = '';
@@ -1287,6 +1324,12 @@ const EditTool = {
         });
         el.addEventListener('blur', () => this.commitAdd());
 
+        if (this.pendingBlock) {
+            el.textContent = this.fillBlock(this.pendingBlock.text);
+            tag.textContent = `${this.pendingBlock.name} · ${size}pt - Enter to add, Esc to cancel`;
+            this.pendingBlock = null;
+            $('edit-hint').textContent = 'Tap anywhere on the page to add new text there.';
+        }
         this.editing = { adding: true, el, tag, box: null, done: false, xFrac, yFrac, size };
         this.view.overlay.append(el, tag);
         el.focus({ preventScroll: true });
@@ -1564,11 +1607,32 @@ const EditTool = {
             aligns.append(b);
         }
 
+        // Retyping a figure is the commonest edit in a set of accounts, and
+        // the grouping is the thing that gives a retyped one away. Offered
+        // only when what is in the box is actually a number.
+        const group = document.createElement('button');
+        group.type = 'button';
+        group.className = 'inline-edit__step';
+        group.textContent = '1,23,456';
+        group.title = 'Group as an Indian figure';
+        const showGroup = () => {
+            const grouped = indianGroup(el.innerText);
+            group.hidden = grouped === null || grouped === el.innerText.trim();
+        };
+        group.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            const grouped = indianGroup(el.innerText);
+            if (grouped !== null) el.textContent = grouped;
+            showGroup();
+        });
+        el.addEventListener('input', showGroup);
+        showGroup();
+
         const help = document.createElement('span');
         help.className = 'inline-edit__help';
         help.textContent = isBlock ? 'Ctrl+Enter applies · Esc cancels'
                                    : 'Enter applies · Esc cancels · drag the edge to widen';
-        tag.append(smaller, bigger, family, boldBtn, italicBtn, colour, aligns, label, help);
+        tag.append(smaller, bigger, family, boldBtn, italicBtn, colour, aligns, group, label, help);
 
         // Ctrl+B and Ctrl+I, because every editor has them.
         el.addEventListener('keydown', (e) => {
@@ -1923,6 +1987,173 @@ const EditTool = {
             await this.refreshHistory();
             await this.showImages(true);
         });
+    },
+
+    /** Cast every column on the page and agree it to the printed total.
+     *
+     * The tick-and-tie, which is done by hand on every set of accounts and is
+     * the reason a schedule gets read three times. Only the rows that call
+     * themselves a total are tested, against the run of figures above them
+     * since the last total - which is what an auditor actually does, and why
+     * subtotals do not turn into a page of false alarms.
+     */
+    async checkFooting() {
+        await UI.run('Casting the columns…', async () => {
+            const res = await engine.callJSON('check_footing', this.view.docId);
+            const words = await engine.callJSON('check_words', this.view.docId);
+            this.footProblems = res.problems;
+            const box = $('edit-foot-results');
+            box.classList.remove('hidden');
+            const wrong = res.problems.filter((p) => p.status === 'differs');
+
+            const money = (v) => Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2 });
+            const rows = res.problems.map((p, i) => {
+                if (p.status === 'unchecked') {
+                    return `<div class="foot-row foot-row--skip">
+                        <strong>p${p.page + 1}</strong> ${safeText(p.label)}
+                        <div class="muted">Not checked - ${safeText(p.why)}</div></div>`;
+                }
+                return `<div class="foot-row foot-row--${p.status}" data-page="${p.page}">
+                    <strong>p${p.page + 1}</strong> ${safeText(p.label)}
+                    <div class="muted">says ${money(p.printed)} · casts to ${money(p.computed)}
+                        · <strong>${p.diff > 0 ? 'over' : 'short'} by ${money(Math.abs(p.diff))}</strong>
+                        <span class="muted">(${p.addends} figures)</span></div>
+                    ${p.bbox ? `<button class="btn btn--sm foot-fix" data-fix="${i}">Put it right</button>` : ''}
+                </div>`;
+            }).join('');
+
+            const wordRows = words.problems.map((w) => `<div class="foot-row foot-row--differs" data-page="${w.page}">
+                    <strong>p${w.page + 1}</strong> ${safeText(w.words)}
+                    <div class="muted">the figure beside it reads as
+                        <strong>${safeText(w.expected)}</strong></div></div>`).join('');
+
+            box.innerHTML = `<h4 class="side-subtitle">Totals</h4>
+                <p class="muted">${res.checked} total${res.checked === 1 ? '' : 's'} cast across
+                   ${res.pages} page${res.pages === 1 ? '' : 's'} · <strong>${res.agreed} agreed</strong>${
+                     wrong.length ? ` · <strong class="warn">${wrong.length} did not</strong>` : ''}</p>
+                ${rows || '<p class="muted">Every total agrees.</p>'}
+                <h4 class="side-subtitle">Figures against words</h4>
+                <p class="muted">${words.checked} amount${words.checked === 1 ? '' : 's'} written out in words${
+                    words.problems.length ? '' : ' · all agree'}</p>
+                ${wordRows}`;
+
+            $$('.foot-row[data-page]', box).forEach((el) => el.addEventListener('click', (e) => {
+                if (e.target.classList.contains('foot-fix')) return;
+                this.view.page = Number(el.dataset.page);
+                this.view.render();
+            }));
+            $$('.foot-fix', box).forEach((btn) => btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.putRight(this.footProblems[Number(btn.dataset.fix)]);
+            }));
+
+            const off = wrong.length + words.problems.length;
+            if (!res.checked && !words.checked) {
+                UI.toast('Nothing on this document calls itself a total', 'info');
+            } else if (off) {
+                UI.toast(`${off} thing${off === 1 ? '' : 's'} to look at`, 'error');
+            } else {
+                UI.toast('Everything agrees', 'success');
+            }
+        });
+    },
+
+    /** Write the figure the column actually comes to.
+     *
+     * The cell is rewritten through the ordinary editing path, so it takes
+     * the document's own font and baseline and how the figure is written -
+     * grouping, decimal places - is copied from what was there. A corrected
+     * total should look like the rest of the schedule, not like a correction.
+     */
+    async putRight(problem) {
+        if (!problem || !problem.bbox) return;
+        const money = Number(problem.computed).toLocaleString('en-IN', { minimumFractionDigits: 2 });
+        if (!confirm(`Rewrite this total as ${money}?`)) return;
+        await UI.run('Correcting the total…', async () => {
+            await this.mark();
+            if (this.view.page !== problem.page) {
+                this.view.page = problem.page;
+            }
+            await engine.call('fix_total', this.view.docId, problem.page,
+                              JSON.stringify(problem.bbox), problem.computed);
+            await this.view.render();
+            await this.refreshHistory();
+            UI.toast('Total corrected', 'success');
+            await this.checkFooting();
+        });
+    },
+
+    /* Saved blocks: the paragraphs that get retyped on every engagement.
+     *
+     * Kept in this browser and nowhere else, which is the same promise the
+     * rest of the suite makes about documents. They are text, not formatting:
+     * whatever size and colour the Add-text controls are set to is what they
+     * arrive in, so one block can serve a footer and a heading.
+     */
+    BLOCKS_KEY: 'miyee.blocks',
+
+    blocks() {
+        try {
+            return JSON.parse(localStorage.getItem(this.BLOCKS_KEY) || '[]');
+        } catch (err) {
+            return [];
+        }
+    },
+
+    storeBlocks(list) {
+        try {
+            localStorage.setItem(this.BLOCKS_KEY, JSON.stringify(list));
+        } catch (err) {
+            UI.toast('This browser will not let the block be saved', 'error');
+        }
+    },
+
+    renderBlocks() {
+        const box = $('edit-blocks');
+        if (!box) return;
+        const list = this.blocks();
+        box.innerHTML = list.length
+            ? list.map((b, i) => `<div class="block-item">
+                    <button class="block-item__use" data-use="${i}"
+                            title="Place this on the page">${safeText(b.name)}</button>
+                    <button class="block-item__del" data-del="${i}" title="Forget this block">✕</button>
+                    <div class="muted">${safeText(b.text.slice(0, 70))}${b.text.length > 70 ? '…' : ''}</div>
+                </div>`).join('')
+            : '<p class="muted">Nothing saved yet.</p>';
+        $$('[data-use]', box).forEach((btn) => btn.addEventListener('click', () => {
+            this.pendingBlock = this.blocks()[Number(btn.dataset.use)];
+            $$('[data-editmode]').forEach((b) => b.classList.toggle('active', b.dataset.editmode === 'ADD'));
+            this.mode = 'ADD';
+            $('edit-add-options').classList.remove('hidden');
+            this.view.overlay.classList.add('overlay--add');
+            $('edit-hint').textContent = `"${this.pendingBlock.name}" is ready - tap where it should go.`;
+        }));
+        $$('[data-del]', box).forEach((btn) => btn.addEventListener('click', () => {
+            const list = this.blocks();
+            list.splice(Number(btn.dataset.del), 1);
+            this.storeBlocks(list);
+            this.renderBlocks();
+        }));
+    },
+
+    saveBlock() {
+        const text = prompt('The text of the block:');
+        if (!text || !text.trim()) return;
+        const name = (prompt('A short name for it:') || '').trim()
+                     || text.trim().split(/\s+/).slice(0, 4).join(' ');
+        const list = this.blocks();
+        list.push({ name, text });
+        this.storeBlocks(list);
+        this.renderBlocks();
+        UI.toast('Block saved on this device', 'success');
+    },
+
+    /** {date} is the one placeholder worth having: every one of these blocks
+     *  carries a date, and retyping it is exactly what they exist to avoid. */
+    fillBlock(text) {
+        const today = new Date().toLocaleDateString('en-IN',
+            { day: '2-digit', month: 'short', year: 'numeric' });
+        return String(text).replace(/\{date\}/gi, today);
     },
 
     /** Drag a rectangle to place an annotation. */

@@ -2220,6 +2220,317 @@ def verify_signatures(data):
     })
 
 
+# --------------------------------------------------------------------------
+# arithmetic on the page
+# --------------------------------------------------------------------------
+
+_TOTAL_WORDS = ("total", "aggregate", "sum", "grand total", "sub-total", "subtotal",
+                "net ", "gross ", "balance c/f", "carried forward")
+
+_NIL = {"-", "\u2013", "\u2014", "nil", "--", ""}
+
+
+def _parse_amount(text):
+    """Read a figure as a CA writes it, or None if it is not one.
+
+    Indian grouping (12,34,567.89), a rupee sign, brackets for negative,
+    a dash for nil, and a trailing Cr/Dr are all ordinary in the documents
+    this is pointed at. The Cr/Dr is reported rather than guessed at: a
+    column mixing them is not something to silently add up.
+    """
+    raw = str(text or "").strip()
+    if raw.lower() in _NIL:
+        return 0.0, ""
+    marker = ""
+    low = raw.lower()
+    if low.endswith("cr") or low.endswith("dr"):
+        marker = low[-2:]
+        raw = raw[:-2].strip()
+    negative = raw.startswith("(") and raw.endswith(")")
+    if negative:
+        raw = raw[1:-1]
+    cleaned = re.sub(r"[^\d.\-]", "", raw.replace("\u2212", "-"))
+    if not cleaned or cleaned in {"-", ".", "-."}:
+        return None
+    try:
+        value = float(cleaned)
+    except ValueError:
+        return None
+    return (-value if negative else value), marker
+
+
+def _column_values(rows, col, upto):
+    """The figures in one column above a given row, and what they carried."""
+    values, markers = [], set()
+    for r in range(upto):
+        cell = rows[r][col] if col < len(rows[r]) else ""
+        parsed = _parse_amount(cell)
+        if parsed is None:
+            continue
+        value, marker = parsed
+        values.append(value)
+        if marker:
+            markers.add(marker)
+    return values, markers
+
+
+_ONES = ("", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+         "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
+         "seventeen", "eighteen", "nineteen")
+_TENS = ("", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")
+
+
+def _two_digits(n):
+    if n < 20:
+        return _ONES[n]
+    return (_TENS[n // 10] + ("-" + _ONES[n % 10] if n % 10 else "")).strip("-")
+
+
+def indian_words(amount):
+    """A figure as it is written out on an Indian instrument.
+
+    Lakh and crore, not million: "Rupees Four Lakh Fifty Thousand Only" is
+    what the document says, and comparing it against a Western grouping would
+    disagree with every correct document in the country.
+    """
+    amount = float(amount)
+    sign = "minus " if amount < 0 else ""
+    amount = abs(amount)
+    rupees = int(amount)
+    paise = int(round((amount - rupees) * 100))
+
+    if rupees == 0:
+        words = "zero"
+    else:
+        parts = []
+        for divisor, name in ((10000000, "crore"), (100000, "lakh"), (1000, "thousand"),
+                              (100, "hundred")):
+            count = rupees // divisor
+            if count:
+                # Crore runs past 99 - "one hundred twenty crore" - so the
+                # count above a crore is itself spelled out in this scheme.
+                head = indian_words(count).replace("rupees ", "") if divisor == 10000000 and count > 99 \
+                    else _two_digits(count)
+                parts.append(f"{head} {name}")
+                rupees %= divisor
+        if rupees:
+            parts.append(_two_digits(rupees))
+        words = " ".join(p for p in parts if p)
+
+    out = f"{sign}rupees {words}"
+    if paise:
+        out += f" and {_two_digits(paise)} paise"
+    return out.strip() + " only"
+
+
+def _normalise_words(text):
+    """Strip a written amount down to the words that carry meaning."""
+    low = str(text or "").lower()
+    low = low.replace("rs.", "rupees").replace("rs ", "rupees ").replace("inr", "rupees")
+    low = re.sub(r"[^a-z ]+", " ", low)
+    drop = {"only", "rupees", "rupee", "and", "the", "of", "sum", "amount", "in", "words", "paise"}
+    return [w for w in low.split() if w and w not in drop]
+
+
+def check_words(doc_id, pages_spec=""):
+    """Find amounts written in words and agree them to the figure beside them.
+
+    "Rupees Four Lakh Fifty Thousand Only" next to Rs 4,05,000 is the classic
+    expensive mistake on a cheque, an agreement or an audit report, and it
+    survives every proofread because the two halves are never read together.
+    Here they are.
+    """
+    doc = _doc(doc_id)
+    findings = []
+    checked = 0
+    pattern = re.compile(r"(rupees|rs\.?|inr)\s+([a-z \-]{6,120}?)\s*only", re.I)
+    for pno in _page_indices(doc, pages_spec):
+        page = doc[pno]
+        _progress(pno, doc.page_count, "Reading page")
+        text = page.get_text()
+        for match in pattern.finditer(text):
+            phrase = match.group(0)
+            said = _normalise_words(phrase)
+            if not said:
+                continue
+            # The figure is whatever amount sits nearest the phrase, either
+            # side of it - the layouts put it before as often as after.
+            start, end = max(0, match.start() - 120), match.end() + 120
+            window = text[start:end]
+            numbers = []
+            for found in re.finditer(r"[\u20b9]?\s*\d[\d,]*(?:\.\d{1,2})?", window):
+                raw = found.group(0)
+                parsed = _parse_amount(raw)
+                # A clause number - the "2." of "2. A security deposit" - is
+                # not an amount. Anything grouped, or a thousand and over, is.
+                if not parsed or (abs(parsed[0]) < 1000 and "," not in raw):
+                    continue
+                here = start + found.start()
+                away = 0 if match.start() <= here <= match.end() else \
+                    min(abs(here - match.start()), abs(here - match.end()))
+                numbers.append((away, parsed[0]))
+            if not numbers:
+                continue
+            checked += 1
+            values = [v for _, v in sorted(numbers)]
+            agreed = any(_normalise_words(indian_words(v)) == said for v in values)
+            if not agreed:
+                findings.append({
+                    "page": pno,
+                    "words": phrase.strip()[:120],
+                    # Nearest first, since that is the figure the phrase is
+                    # almost certainly about.
+                    "figures": values[:4],
+                    "expected": indian_words(values[0]),
+                })
+    return json.dumps({"checked": checked, "problems": findings})
+
+
+def indian_format(value, decimals=2, grouped=True):
+    """A figure grouped the way it is written here: 12,34,567.89.
+
+    Not 1,234,567.89. Every tool written elsewhere gets this wrong, and a
+    schedule with Western grouping is spotted immediately by anyone who reads
+    Indian accounts.
+    """
+    value = float(value)
+    sign = "-" if value < 0 else ""
+    whole = abs(value)
+    body = f"{whole:.{int(decimals)}f}"
+    integer, _, fraction = body.partition(".")
+    if grouped and len(integer) > 3:
+        head, tail = integer[:-3], integer[-3:]
+        pieces = []
+        while len(head) > 2:
+            pieces.insert(0, head[-2:])
+            head = head[:-2]
+        if head:
+            pieces.insert(0, head)
+        integer = ",".join(pieces + [tail])
+    return sign + integer + (f".{fraction}" if fraction else "")
+
+
+def fix_total(doc_id, pno, bbox, value):
+    """Write the figure a total should have been, in the type it was set in.
+
+    The cell is rewritten through the same path as any other edit, so it takes
+    the document's own font and baseline and does not announce itself as a
+    correction. How the figure is written - grouping, decimal places - is
+    copied from what was there, because a schedule that suddenly switches
+    style mid-column is its own kind of wrong.
+    """
+    doc = _doc(doc_id)
+    page = doc[int(pno)]
+    x0, y0, x1, y1 = [float(v) for v in (json.loads(bbox) if isinstance(bbox, str) else bbox)]
+    span = _span_at(page, pymupdf.Rect(x0, y0, x1, y1))
+    if not span:
+        raise ValueError("Nothing to rewrite in that cell")
+
+    was = str(span.get("text", ""))
+    decimals = len(was.partition(".")[2].strip()) if "." in was else 0
+    text = indian_format(value, decimals, "," in was)
+    # Keep whatever sat around the figure: a rupee sign, a trailing Cr.
+    lead = re.match(r"^[^\d\-(]*", was).group(0)
+    trail = re.search(r"[^\d.,)]*$", was).group(0)
+    if was.strip().startswith("(") and float(value) < 0:
+        text = f"({indian_format(abs(value), decimals, ',' in was)})"
+
+    return edit_text(doc_id, pno, span["bbox"], f"{lead}{text}{trail}",
+                     span.get("font", ""), 0, span.get("color", 0), span.get("flags", 0),
+                     False, json.dumps(list(span.get("origin", []))), 0.0,
+                     was, 1.0, 0.0, span.get("size", 0))
+
+
+def check_footing(doc_id, pages_spec=""):
+    """Add up what the page says it has added up, and report the differences.
+
+    This is the tick-and-tie done by hand on every set of accounts: cast the
+    column, agree it to the printed total, move on. It is checked rather than
+    computed from scratch - only the cells that claim to be a total are
+    tested, against the run of figures above them since the last total. That
+    is what an auditor actually does, and it is why subtotals in the middle of
+    a schedule do not turn into a page of false alarms.
+
+    A column that mixes Cr and Dr is reported as unchecked rather than added
+    up, because the sign convention is the document's and guessing it would
+    produce a confident wrong answer.
+    """
+    doc = _doc(doc_id)
+    results = []
+    checked = agreed = 0
+    for pno in _page_indices(doc, pages_spec):
+        page = doc[pno]
+        _progress(pno, doc.page_count, "Casting page")
+        for tno, table in enumerate(_find_page_tables(page)):
+            try:
+                rows = table.extract()
+            except Exception:
+                continue
+            rows = [[(c or "") for c in row] for row in rows if row]
+            if len(rows) < 2:
+                continue
+            width = max(len(r) for r in rows)
+            rows = [r + [""] * (width - len(r)) for r in rows]
+
+            # Where each cell sits, so a total that does not agree can be
+            # offered as something to put right rather than only reported.
+            try:
+                geometry = [r.cells for r in table.rows]
+            except Exception:
+                geometry = []
+
+            def cell_box(r, c):
+                try:
+                    box = geometry[r][c]
+                    return [round(float(v), 2) for v in box] if box else None
+                except Exception:
+                    return None
+
+            last_total = 0
+            for index, row in enumerate(rows):
+                label = " ".join(str(c) for c in row[:1]).strip().lower()
+                if not any(word in label for word in _TOTAL_WORDS):
+                    continue
+                for col in range(1, width):
+                    parsed = _parse_amount(row[col])
+                    if parsed is None:
+                        continue
+                    printed, printed_marker = parsed
+                    values, markers = _column_values(rows[last_total:index], col, index - last_total)
+                    if len(values) < 2:
+                        continue
+                    if len(markers | ({printed_marker} if printed_marker else set())) > 1:
+                        results.append({
+                            "page": pno, "table": tno, "row": index, "col": col,
+                            "label": row[0][:60], "status": "unchecked",
+                            "why": "the column mixes Cr and Dr",
+                        })
+                        continue
+                    computed = round(sum(values), 2)
+                    diff = round(printed - computed, 2)
+                    checked += 1
+                    if abs(diff) < 0.01:
+                        agreed += 1
+                        status = "agrees"
+                    elif abs(diff) <= max(1.0, len(values) * 0.5):
+                        status = "rounding"
+                    else:
+                        status = "differs"
+                    if status != "agrees":
+                        results.append({
+                            "page": pno, "table": tno, "row": index, "col": col,
+                            "label": row[0][:60], "status": status,
+                            "printed": printed, "computed": computed,
+                            "diff": diff, "addends": len(values),
+                            "bbox": cell_box(index, col),
+                            "text": str(row[col])[:40],
+                        })
+                last_total = index + 1
+
+    return json.dumps({"checked": checked, "agreed": agreed,
+                       "problems": results, "pages": doc.page_count})
+
+
 def export_text(doc_id):
     return "\n\n".join(page.get_text() for page in _doc(doc_id))
 

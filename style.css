@@ -2400,3 +2400,62 @@ body {
 .img-box__handle--ne { right: -5px; top: -5px; cursor: nesw-resize; }
 .img-box__handle--sw { left: -5px; bottom: -5px; cursor: nesw-resize; }
 .img-box__handle--se { right: -5px; bottom: -5px; cursor: nwse-resize; }
+
+
+/* Results of casting the columns. Red is a real difference; amber is small
+   enough to be rounding; grey is something deliberately not added up. */
+.foot-row {
+  padding: var(--space-8) var(--space-12);
+  border-left: 3px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  margin-bottom: var(--space-6);
+  background: var(--color-bg-1);
+  font-size: var(--font-size-xs);
+}
+
+.foot-row[data-page] { cursor: pointer; }
+.foot-row[data-page]:hover { background: var(--color-bg-3); }
+.foot-row--differs { border-left-color: var(--color-error); }
+.foot-row--rounding { border-left-color: var(--color-warning); }
+.foot-row--skip { border-left-color: var(--color-border); opacity: 0.8; }
+
+
+/* Saved blocks: a short list of text worth not retyping. */
+.side-block { padding: var(--space-12) var(--space-16); border-top: 1px solid var(--color-border); }
+.block-list { margin-bottom: var(--space-8); }
+
+.block-item {
+  padding: var(--space-6) var(--space-8);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  margin-bottom: var(--space-6);
+  font-size: var(--font-size-xs);
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px var(--space-6);
+}
+
+.block-item .muted { grid-column: 1 / -1; }
+
+.block-item__use {
+  text-align: left;
+  border: none;
+  background: none;
+  color: var(--color-primary);
+  font-weight: var(--font-weight-medium);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  padding: 0;
+}
+
+.block-item__use:hover { text-decoration: underline; }
+
+.block-item__del {
+  border: none;
+  background: none;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  padding: 0 var(--space-4);
+}
+
+.block-item__del:hover { color: var(--color-error); }
