@@ -13,14 +13,14 @@
 
     <!-- SVG first for modern browsers; .ico covers older ones and the
          automatic /favicon.ico request. -->
-    <link rel="icon" href="favicon.svg?v=4.35.0" type="image/svg+xml">
-    <link rel="icon" href="favicon.ico?v=4.35.0" sizes="16x16 32x32 48x48">
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.35.0">
-    <link rel="manifest" href="site.webmanifest?v=4.35.0">
+    <link rel="icon" href="favicon.svg?v=4.36.0" type="image/svg+xml">
+    <link rel="icon" href="favicon.ico?v=4.36.0" sizes="16x16 32x32 48x48">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.36.0">
+    <link rel="manifest" href="site.webmanifest?v=4.36.0">
 
     <!-- ?v= busts the browser cache on redeploy: without it a stale app.js/style.css
          pair silently breaks the page. Bump APP_VERSION in app.js to match. -->
-    <link rel="stylesheet" href="style.css?v=4.35.0">
+    <link rel="stylesheet" href="style.css?v=4.36.0">
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <!-- Only for digital signatures: reads a .p12/.pfx and builds the CMS
@@ -31,7 +31,7 @@
     <header class="header">
         <div class="header__content">
             <h1 class="header__title">
-                <img class="header__logo" src="logo.svg?v=4.35.0" alt="" width="34" height="34">
+                <img class="header__logo" src="logo.svg?v=4.36.0" alt="" width="34" height="34">
                 MiyeePDF <span class="header__byline">Built by Vipin Nair</span>
             </h1>
             <div class="header__right">
@@ -167,6 +167,9 @@
                             <button class="mode-btn" data-editmode="IMAGE">🖼️ Images</button>
                         </div>
                         <div class="tool-group">
+                            <button class="btn btn--sm" id="edit-foot" title="Cast every column, and agree amounts written in words to the figures beside them">🧮 Check figures</button>
+                        </div>
+                        <div class="tool-group">
                             <label class="tool-option">Colour <input type="color" id="edit-annot-color" value="#ffd400"></label>
                         </div>
                         <div class="tool-group hidden" id="edit-add-options">
@@ -254,6 +257,15 @@
                             <div id="edit-search-results" class="search-results"></div>
                         </div>
                         <div id="edit-annot-list" class="annot-list"></div>
+                        <div id="edit-foot-results" class="annot-list hidden"></div>
+                        <div class="side-block">
+                            <h4 class="side-subtitle">Saved blocks</h4>
+                            <p class="hint hint--inline">The paragraphs you retype constantly - a UDIN line, a
+                               firm footer, a standard audit sentence. Kept on this device only, like everything
+                               else here. <code>{date}</code> becomes today's date when the block is placed.</p>
+                            <div id="edit-blocks" class="block-list"></div>
+                            <button class="btn btn--sm" id="edit-block-save">＋ Save a block</button>
+                        </div>
 
                         <hr class="divider">
                         <h4 class="side-subtitle">Bookmarks</h4>
@@ -1259,6 +1271,6 @@
         </div>
     </footer>
 
-    <script src="app.js?v=4.35.0"></script>
+    <script src="app.js?v=4.36.0"></script>
 </body>
 </html>
